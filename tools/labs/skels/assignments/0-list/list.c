@@ -123,6 +123,23 @@ static int list_cmd_add_end(const char *str, size_t str_len)
 	return 0;
 }
 
+static int list_cmd_del(const char *str, size_t str_len, bool delete_all)
+{
+	struct string_list *curr, *tmp;
+
+	list_for_each_entry_safe(curr, tmp, &my_list, list) {
+		if (!strncmp(str, curr->str, str_len)) {
+			list_del(&curr->list);
+			kfree(curr->str);
+			kfree(curr);
+			if (!delete_all)
+				break;
+		}
+	}
+
+	return 0;
+}
+
 static int list_read_open(struct inode *inode, struct  file *file)
 {
 	return single_open(file, list_proc_show, NULL);
@@ -179,10 +196,14 @@ static ssize_t list_write(struct file *file, const char __user *buffer,
 		}
 		case CMD_DEL_FIRST: {
 			pr_debug("DEL_FIRST: %s\n", cmd_str_arg);
+			if ((res = list_cmd_del(cmd_str_arg, cmd_str_arg_len, false)) != 0)
+				return res;
 			break;
 		}
 		case CMD_DEL_ALL: {
 			pr_debug("DEL_ALL: %s\n", cmd_str_arg);
+			if ((res = list_cmd_del(cmd_str_arg, cmd_str_arg_len, true)) != 0)
+				return res;
 			break;
 		}
 		default: {
