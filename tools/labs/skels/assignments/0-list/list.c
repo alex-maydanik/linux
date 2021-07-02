@@ -14,6 +14,7 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/uaccess.h>
+#include <linux/rwsem.h>
 
 #define PROCFS_MAX_SIZE		512
 
@@ -47,14 +48,20 @@ struct string_list {
 };
 LIST_HEAD(my_list);
 
+DECLARE_RWSEM(list_lock);
+
 static int list_proc_show(struct seq_file *m, void *v)
 {
 	/* TODO 3: print your list. One element / line. */
 	struct string_list *elem;
 
+	down_read(&list_lock);
+
 	list_for_each_entry(elem, &my_list, list) {
 		seq_puts(m, elem->str);
 	}
+
+	up_read(&list_lock);
 
 	return 0;
 }
@@ -107,7 +114,9 @@ static int list_cmd_add_top(const char *str, size_t str_len)
 	if (!new_elem)
 		return -ENOMEM;
 	
+	down_write(&list_lock);
 	list_add(&new_elem->list, &my_list);
+	up_write(&list_lock);
 
 	return 0;
 }
@@ -118,7 +127,9 @@ static int list_cmd_add_end(const char *str, size_t str_len)
 	if (!new_elem)
 		return -ENOMEM;
 	
+	down_write(&list_lock);
 	list_add_tail(&new_elem->list, &my_list);
+	up_write(&list_lock);
 
 	return 0;
 }
@@ -127,6 +138,7 @@ static int list_cmd_del(const char *str, size_t str_len, bool delete_all)
 {
 	struct string_list *curr, *tmp;
 
+	down_write(&list_lock);
 	list_for_each_entry_safe(curr, tmp, &my_list, list) {
 		if (!strncmp(str, curr->str, str_len)) {
 			list_del(&curr->list);
@@ -136,8 +148,22 @@ static int list_cmd_del(const char *str, size_t str_len, bool delete_all)
 				break;
 		}
 	}
+	up_write(&list_lock);
 
 	return 0;
+}
+
+static void list_destroy(void)
+{
+	struct string_list *curr, *tmp;
+
+	down_write(&list_lock);
+	list_for_each_entry_safe(curr, tmp, &my_list, list) {
+		list_del(&curr->list);
+		kfree(curr->str);
+		kfree(curr);
+	}
+	up_write(&list_lock);
 }
 
 static int list_read_open(struct inode *inode, struct  file *file)
@@ -254,8 +280,7 @@ proc_list_cleanup:
 
 static void list_exit(void)
 {
-	/* TODO 6: Add d-tor for list */
-	/* TODO 7: Add mutexes (rw locks) for safe access */
+	list_destroy();
 	proc_remove(proc_list);
 }
 
