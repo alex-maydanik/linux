@@ -26,7 +26,7 @@
 #define CMD_ADD_END_STR		"adde "
 #define CMD_DEL_FIRST_STR	"delf "
 #define CMD_DEL_ALL_STR		"dela "
-#define CMD_LEN 		(sizeof(CMD_ADD_TOP_STR) - 1)
+#define CMD_LEN			(sizeof(CMD_ADD_TOP_STR) - 1)
 
 enum command {
 	CMD_INVALID = 0,
@@ -43,8 +43,8 @@ struct proc_dir_entry *proc_list_write;
 
 /* TODO 2: define your list! */
 struct string_list {
-    char* str;
-    struct list_head list;
+	char *str;
+	struct list_head list;
 };
 LIST_HEAD(my_list);
 
@@ -79,19 +79,19 @@ static enum command list_parse_command(const char *buf)
 		return CMD_DEL_FIRST;
 	if (str_has_prefix(buf, CMD_DEL_ALL_STR))
 		return CMD_DEL_ALL;
-	
+
 	return CMD_INVALID;
 }
 
-static struct string_list* list_alloc_new_elem(const char *str, size_t str_len)
+static struct string_list *list_alloc_new_elem(const char *str, size_t str_len)
 {
 	struct string_list *new_elem = NULL;
 	char *new_str = NULL;
 
-	new_elem = kmalloc(sizeof *new_elem, GFP_KERNEL);
+	new_elem = kmalloc(sizeof(*new_elem), GFP_KERNEL);
 	if (!new_elem)
 		return NULL;
-	
+
 	new_str = kmalloc(str_len + 1, GFP_KERNEL);
 	if (!new_str)
 		goto alloc_failure;
@@ -111,9 +111,10 @@ alloc_failure:
 static int list_cmd_add_top(const char *str, size_t str_len)
 {
 	struct string_list *new_elem = list_alloc_new_elem(str, str_len);
+
 	if (!new_elem)
 		return -ENOMEM;
-	
+
 	down_write(&list_lock);
 	list_add(&new_elem->list, &my_list);
 	up_write(&list_lock);
@@ -124,9 +125,10 @@ static int list_cmd_add_top(const char *str, size_t str_len)
 static int list_cmd_add_end(const char *str, size_t str_len)
 {
 	struct string_list *new_elem = list_alloc_new_elem(str, str_len);
+
 	if (!new_elem)
 		return -ENOMEM;
-	
+
 	down_write(&list_lock);
 	list_add_tail(&new_elem->list, &my_list);
 	up_write(&list_lock);
@@ -210,25 +212,29 @@ static ssize_t list_write(struct file *file, const char __user *buffer,
 	switch (current_cmd) {
 		case CMD_ADD_TOP: {
 			pr_debug("ADD_TOP: %s\n", cmd_str_arg);
-			if ((res = list_cmd_add_top(cmd_str_arg, cmd_str_arg_len)) != 0)
+			res = list_cmd_add_top(cmd_str_arg, cmd_str_arg_len);
+			if (res != 0)
 				return res;
 			break;
 		}
 		case CMD_ADD_END: {
 			pr_debug("ADD_END: %s\n", cmd_str_arg);
-			if ((res = list_cmd_add_end(cmd_str_arg, cmd_str_arg_len)) != 0)
+			res = list_cmd_add_end(cmd_str_arg, cmd_str_arg_len);
+			if (res != 0)
 				return res;
 			break;
 		}
 		case CMD_DEL_FIRST: {
 			pr_debug("DEL_FIRST: %s\n", cmd_str_arg);
-			if ((res = list_cmd_del(cmd_str_arg, cmd_str_arg_len, false)) != 0)
+			res = list_cmd_del(cmd_str_arg, cmd_str_arg_len, false);
+			if (res != 0)
 				return res;
 			break;
 		}
 		case CMD_DEL_ALL: {
 			pr_debug("DEL_ALL: %s\n", cmd_str_arg);
-			if ((res = list_cmd_del(cmd_str_arg, cmd_str_arg_len, true)) != 0)
+			res = list_cmd_del(cmd_str_arg, cmd_str_arg_len, true);
+			if (res != 0)
 				return res;
 			break;
 		}
