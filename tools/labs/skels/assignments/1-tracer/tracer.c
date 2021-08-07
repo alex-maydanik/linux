@@ -15,7 +15,6 @@
 #include <linux/hashtable.h>
 #include <linux/slab.h>
 #include <linux/sched.h>
-#include <linux/rwsem.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 
@@ -54,14 +53,12 @@ struct trace_data {
 
 #define TRACED_PROCS_HASH_BITS	5
 static DEFINE_HASHTABLE(traced_procs_hash, TRACED_PROCS_HASH_BITS);
-static DECLARE_RWSEM(traced_procs_lock);
+static DEFINE_SPINLOCK(traced_procs_lock);
 
 static int tracer_add_process(pid_t pid)
 {
 	struct trace_data *td;
 	int ret = 0;
-
-	down_write(&traced_procs_lock);
 
 	/* Check if process exists in the system */
 	if (!find_vpid(pid)) {
@@ -69,6 +66,8 @@ static int tracer_add_process(pid_t pid)
 		ret = -ESRCH;
 		goto error;
 	}
+
+	spin_lock(&traced_procs_lock);
 
 	/* Check if process is already being traced */
 	hash_for_each_possible(traced_procs_hash, td, hnode, pid) {
@@ -79,7 +78,7 @@ static int tracer_add_process(pid_t pid)
 		}
 	}
 		
-	td = kzalloc(sizeof(*td), GFP_KERNEL);
+	td = kzalloc(sizeof(*td), GFP_ATOMIC);
 	if (!td) {
 		ret = -ENOMEM;
 		goto error;
@@ -88,7 +87,7 @@ static int tracer_add_process(pid_t pid)
 	hash_add(traced_procs_hash, &td->hnode, pid);
 
 error:
-	up_write(&traced_procs_lock);
+	spin_unlock(&traced_procs_lock);
 
 	return ret;
 }
@@ -98,7 +97,7 @@ static int tracer_remove_process(pid_t pid)
 {
 	struct trace_data *td;
 
-	down_write(&traced_procs_lock);
+	spin_lock(&traced_procs_lock);
 
 	/* Find process */
 	hash_for_each_possible(traced_procs_hash, td, hnode, pid) {
@@ -106,13 +105,13 @@ static int tracer_remove_process(pid_t pid)
 			goto found;
 	}
 
-	up_write(&traced_procs_lock);
+	spin_unlock(&traced_procs_lock);
 	return -ESRCH;
 
 found:
 	hash_del(&td->hnode);
-	up_write(&traced_procs_lock);
 	kfree(td);
+	spin_unlock(&traced_procs_lock);
 
 	return 0;
 }
@@ -145,7 +144,7 @@ static int tracer_proc_show(struct seq_file *m, void *v)
 		"PID", "kmalloc", "kfree", "kmalloc_mem", "kfree_mem", "sched",
 		"up", "down", "lock", "unlock");
 
-	down_read(&traced_procs_lock);
+	spin_lock(&traced_procs_lock);
 	hash_for_each(traced_procs_hash, i, td, hnode) {
 		seq_printf(m, "%-6d%-8llu%-6llu%-12llu%-11llu%-8llu%-7llu%-7llu%-6llu%-6llu\n",
 			td->pid, td->kmalloc_calls, td->kfree_calls,
@@ -153,7 +152,7 @@ static int tracer_proc_show(struct seq_file *m, void *v)
 			td->up_calls, td->down_calls,
 			td->lock_calls, td->unlock_calls);
 	}
-	up_read(&traced_procs_lock);
+	spin_unlock(&traced_procs_lock);
 
 	return 0;
 }
@@ -205,12 +204,12 @@ static void tracer_exit(void)
 	int i;
 
 	/* Free hashtable */
-	down_write(&traced_procs_lock);
+	spin_lock(&traced_procs_lock);
 	hash_for_each_safe(traced_procs_hash, i, tmp, td, hnode) {
 		hash_del(&td->hnode);
 		kfree(td);
 	}	
-	up_write(&traced_procs_lock);
+	spin_unlock(&traced_procs_lock);
 
 	proc_remove(proc_tracer);
 	misc_deregister(&tracer_device);
