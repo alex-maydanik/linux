@@ -18,6 +18,7 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/kprobes.h>
+#include <linux/ptrace.h>
 
 #include "tracer.h"
 
@@ -58,11 +59,17 @@ static DEFINE_SPINLOCK(traced_procs_lock);
 
 #define KRETPROBE_MAX_ACTIVE	32
 
+/* Per-instance private data */
+struct kprobe_kmalloc_data {
+	void *addr;
+	size_t size;
+};
+
 static int kprobe_calls_count_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	struct trace_data *td;
 	const char* symbol_name;
-	pid_t pid = task_pid_nr(current);
+	pid_t pid = task_pid_nr(ri->task);
 	
 	spin_lock(&traced_procs_lock);
 
@@ -80,6 +87,8 @@ static int kprobe_calls_count_handler(struct kretprobe_instance *ri, struct pt_r
 				td->lock_calls++;
 			else if (strcmp(symbol_name, "mutex_unlock") == 0)
 				td->unlock_calls++;
+
+			break;
 		}
 	}
 
@@ -87,6 +96,47 @@ static int kprobe_calls_count_handler(struct kretprobe_instance *ri, struct pt_r
 	return 0;
 }
 NOKPROBE_SYMBOL(kprobe_calls_count_handler);
+
+static int kprobe_kmalloc_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	struct trace_data *td;
+	struct kprobe_kmalloc_data *data = (struct kprobe_kmalloc_data *)ri->data;
+	
+	spin_lock(&traced_procs_lock);
+
+	hash_for_each_possible(traced_procs_hash, td, hnode, task_pid_nr(ri->task)) {
+		if (td->pid == task_pid_nr(ri->task)) {
+			td->kmalloc_calls++;
+			data->size = regs_get_kernel_argument(regs, 0);
+			break;
+		}
+	}
+
+	spin_unlock(&traced_procs_lock);
+	return 0;
+}
+NOKPROBE_SYMBOL(kprobe_kmalloc_entry_handler);
+
+static int kprobe_kmalloc_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	struct trace_data *td;
+	struct kprobe_kmalloc_data *data = (struct kprobe_kmalloc_data *)ri->data;
+	
+	spin_lock(&traced_procs_lock);
+
+	hash_for_each_possible(traced_procs_hash, td, hnode, task_pid_nr(ri->task)) {
+		if (td->pid == task_pid_nr(ri->task)) {
+			data->addr = (void*)regs_return_value(regs);
+			if (data->addr)
+				td->kmalloc_mem += data->size;
+			break;
+		}
+	}
+
+	spin_unlock(&traced_procs_lock);
+	return 0;
+}
+NOKPROBE_SYMBOL(kprobe_kmalloc_ret_handler);
 
 static struct kretprobe up_probe = {
 	.entry_handler = 	kprobe_calls_count_handler,
@@ -118,12 +168,21 @@ static struct kretprobe mutex_unlock_probe = {
 	.kp.symbol_name = 	"mutex_unlock"
 };
 
+static struct kretprobe kmalloc_probe = {
+	.entry_handler = 	kprobe_kmalloc_entry_handler,
+	.handler =		kprobe_kmalloc_ret_handler,
+	.maxactive = 		KRETPROBE_MAX_ACTIVE,
+	.data_size =		sizeof(struct kprobe_kmalloc_data),
+	.kp.symbol_name = 	"__kmalloc"
+};
+
 static struct kretprobe *tracer_kretprobes[] = {
 	&up_probe,
 	&down_probe,
 	&schedule_probe,
 	&mutex_lock_probe,
 	&mutex_unlock_probe,
+	&kmalloc_probe,
 };
 
 static int tracer_add_process(pid_t pid)
