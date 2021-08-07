@@ -17,6 +17,7 @@
 #include <linux/sched.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/kprobes.h>
 
 #include "tracer.h"
 
@@ -54,6 +55,76 @@ struct trace_data {
 #define TRACED_PROCS_HASH_BITS	5
 static DEFINE_HASHTABLE(traced_procs_hash, TRACED_PROCS_HASH_BITS);
 static DEFINE_SPINLOCK(traced_procs_lock);
+
+#define KRETPROBE_MAX_ACTIVE	32
+
+static int kprobe_calls_count_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	struct trace_data *td;
+	const char* symbol_name;
+	pid_t pid = task_pid_nr(current);
+	
+	spin_lock(&traced_procs_lock);
+
+	hash_for_each_possible(traced_procs_hash, td, hnode, pid) {
+		if (td->pid == pid) {
+			symbol_name = ri->rp->kp.symbol_name;
+
+			if (strcmp(symbol_name, "up") == 0)
+				td->up_calls++;
+			else if (strcmp(symbol_name, "down_interruptible") == 0)
+				td->down_calls++;
+			else if (strcmp(symbol_name, "schedule") == 0)
+				td->sched_calls++;
+			else if (strcmp(symbol_name, "mutex_lock_nested") == 0)
+				td->lock_calls++;
+			else if (strcmp(symbol_name, "mutex_unlock") == 0)
+				td->unlock_calls++;
+		}
+	}
+
+	spin_unlock(&traced_procs_lock);
+	return 0;
+}
+NOKPROBE_SYMBOL(kprobe_calls_count_handler);
+
+static struct kretprobe up_probe = {
+	.entry_handler = 	kprobe_calls_count_handler,
+	.maxactive = 		KRETPROBE_MAX_ACTIVE,
+	.kp.symbol_name = 	"up"
+};
+
+static struct kretprobe down_probe = {
+	.entry_handler = 	kprobe_calls_count_handler,
+	.maxactive = 		KRETPROBE_MAX_ACTIVE,
+	.kp.symbol_name = 	"down_interruptible"
+};
+
+static struct kretprobe schedule_probe = {
+	.entry_handler = 	kprobe_calls_count_handler,
+	.maxactive = 		KRETPROBE_MAX_ACTIVE,
+	.kp.symbol_name = 	"schedule"
+};
+
+static struct kretprobe mutex_lock_probe = {
+	.entry_handler = 	kprobe_calls_count_handler,
+	.maxactive = 		KRETPROBE_MAX_ACTIVE,
+	.kp.symbol_name = 	"mutex_lock_nested"
+};
+
+static struct kretprobe mutex_unlock_probe = {
+	.entry_handler = 	kprobe_calls_count_handler,
+	.maxactive = 		KRETPROBE_MAX_ACTIVE,
+	.kp.symbol_name = 	"mutex_unlock"
+};
+
+static struct kretprobe *tracer_kretprobes[] = {
+	&up_probe,
+	&down_probe,
+	&schedule_probe,
+	&mutex_lock_probe,
+	&mutex_unlock_probe,
+};
 
 static int tracer_add_process(pid_t pid)
 {
@@ -181,20 +252,28 @@ static struct miscdevice tracer_device = {
 
 static int tracer_init(void)
 {
-	int err = 0;
+	int ret = 0;
 
-	err = misc_register(&tracer_device);
-	if (err != 0)
-		return err;
+	ret = misc_register(&tracer_device);
+	if (ret != 0)
+		return ret;
 		
-	proc_tracer= proc_create(TRACER_PROCFS_NAME, 0000, proc_tracer, &r_pops);
+	proc_tracer = proc_create(TRACER_PROCFS_NAME, 0000, proc_tracer, &r_pops);
 	if (!proc_tracer) {
-		proc_remove(proc_tracer);
-		misc_deregister(&tracer_device);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto error;
 	}
 
+	ret = register_kretprobes(tracer_kretprobes, ARRAY_SIZE(tracer_kretprobes));
+	if (ret != 0)
+		goto error;
+
 	return 0;
+
+error:
+	proc_remove(proc_tracer);
+	misc_deregister(&tracer_device);
+	return ret;
 }
 
 static void tracer_exit(void)
@@ -203,6 +282,10 @@ static void tracer_exit(void)
 	struct hlist_node *tmp;
 	int i;
 
+	proc_remove(proc_tracer);
+	misc_deregister(&tracer_device);
+	unregister_kretprobes(tracer_kretprobes, ARRAY_SIZE(tracer_kretprobes));
+
 	/* Free hashtable */
 	spin_lock(&traced_procs_lock);
 	hash_for_each_safe(traced_procs_hash, i, tmp, td, hnode) {
@@ -210,9 +293,6 @@ static void tracer_exit(void)
 		kfree(td);
 	}	
 	spin_unlock(&traced_procs_lock);
-
-	proc_remove(proc_tracer);
-	misc_deregister(&tracer_device);
 }
 
 module_init(tracer_init);
