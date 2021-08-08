@@ -27,8 +27,28 @@ MODULE_AUTHOR("Alexander Maydanik <alexander.maydanik@gmail.com>");
 MODULE_LICENSE("GPL v2");
 
 #define TRACER_PROCFS_NAME		"tracer"
-
 struct proc_dir_entry *proc_tracer;
+
+#define KRETPROBE_MAX_ACTIVE	64
+
+/* kmalloc() data */
+struct kmalloc_data {
+	void *addr;
+	size_t size;
+	struct list_head list;
+};
+
+static void free_mem_list(struct list_head *mem_list)
+{
+	struct list_head *i, *n;
+	struct kmalloc_data *mem_data;	
+
+	list_for_each_safe(i, n, mem_list) {
+		mem_data = list_entry(i, struct kmalloc_data, list);
+		list_del(i);
+		kfree(mem_data);
+	}
+}
 
 /*
  * Holds tracing data for a single process.
@@ -50,20 +70,15 @@ struct trace_data {
 	u64 lock_calls;
 	u64 unlock_calls;
 
+	/* List of memory allocations */
+	struct list_head mem_list;
+
 	struct hlist_node hnode;
 };
 
 #define TRACED_PROCS_HASH_BITS	5
 static DEFINE_HASHTABLE(traced_procs_hash, TRACED_PROCS_HASH_BITS);
 static DEFINE_SPINLOCK(traced_procs_lock);
-
-#define KRETPROBE_MAX_ACTIVE	32
-
-/* Per-instance private data */
-struct kprobe_kmalloc_data {
-	void *addr;
-	size_t size;
-};
 
 static int kprobe_calls_count_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
@@ -95,12 +110,11 @@ static int kprobe_calls_count_handler(struct kretprobe_instance *ri, struct pt_r
 	spin_unlock(&traced_procs_lock);
 	return 0;
 }
-NOKPROBE_SYMBOL(kprobe_calls_count_handler);
 
 static int kprobe_kmalloc_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	struct trace_data *td;
-	struct kprobe_kmalloc_data *data = (struct kprobe_kmalloc_data *)ri->data;
+	struct kmalloc_data *data = (struct kmalloc_data *)ri->data;
 	
 	spin_lock(&traced_procs_lock);
 
@@ -115,20 +129,34 @@ static int kprobe_kmalloc_entry_handler(struct kretprobe_instance *ri, struct pt
 	spin_unlock(&traced_procs_lock);
 	return 0;
 }
-NOKPROBE_SYMBOL(kprobe_kmalloc_entry_handler);
 
 static int kprobe_kmalloc_ret_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	struct trace_data *td;
-	struct kprobe_kmalloc_data *data = (struct kprobe_kmalloc_data *)ri->data;
+	struct kmalloc_data *data = (struct kmalloc_data *)ri->data;
+	struct kmalloc_data *copy;
 	
 	spin_lock(&traced_procs_lock);
 
 	hash_for_each_possible(traced_procs_hash, td, hnode, task_pid_nr(ri->task)) {
 		if (td->pid == task_pid_nr(ri->task)) {
 			data->addr = (void*)regs_return_value(regs);
-			if (data->addr)
+
+			/* Check if memory allocation is successful */
+			if (data->addr) {
 				td->kmalloc_mem += data->size;
+
+				/*
+				 * Add allocated memory area to kmalloc_memory_list
+				 * Note - If memory allocation failed, nothing we can do
+				 */
+				copy = kmalloc(sizeof(*copy), GFP_ATOMIC);
+				if (copy) {
+					copy->addr = data->addr;
+					copy->size = data->size;
+					list_add(&copy->list, &td->mem_list);
+				}
+			}
 			break;
 		}
 	}
@@ -136,7 +164,38 @@ static int kprobe_kmalloc_ret_handler(struct kretprobe_instance *ri, struct pt_r
 	spin_unlock(&traced_procs_lock);
 	return 0;
 }
-NOKPROBE_SYMBOL(kprobe_kmalloc_ret_handler);
+
+static int kprobe_kfree_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	struct trace_data *td;
+	void *addr;
+	struct list_head *i, *tmp;
+	struct kmalloc_data *mem_data;
+
+	spin_lock(&traced_procs_lock);
+
+	hash_for_each_possible(traced_procs_hash, td, hnode, task_pid_nr(ri->task)) {
+		if (td->pid == task_pid_nr(ri->task)) {
+			td->kfree_calls++;
+
+			/* Lookup for allocated memory data */
+			addr = (void*)regs_get_kernel_argument(regs, 0);
+			list_for_each_safe(i, tmp, &td->mem_list) {
+				mem_data = list_entry(i, struct kmalloc_data, list);
+				if (mem_data->addr == addr) {
+					td->kfree_mem += mem_data->size;
+					mem_data->addr = 0; /* Invalidate the entry */
+					break;
+				}
+			}
+
+			break;
+		}
+	}
+
+	spin_unlock(&traced_procs_lock);
+	return 0;
+}
 
 static struct kretprobe up_probe = {
 	.entry_handler = 	kprobe_calls_count_handler,
@@ -172,8 +231,14 @@ static struct kretprobe kmalloc_probe = {
 	.entry_handler = 	kprobe_kmalloc_entry_handler,
 	.handler =		kprobe_kmalloc_ret_handler,
 	.maxactive = 		KRETPROBE_MAX_ACTIVE,
-	.data_size =		sizeof(struct kprobe_kmalloc_data),
+	.data_size =		sizeof(struct kmalloc_data),
 	.kp.symbol_name = 	"__kmalloc"
+};
+
+static struct kretprobe kfree_probe = {
+	.entry_handler = 	kprobe_kfree_entry_handler,
+	.maxactive = 		KRETPROBE_MAX_ACTIVE,
+	.kp.symbol_name = 	"kfree"
 };
 
 static struct kretprobe *tracer_kretprobes[] = {
@@ -183,6 +248,7 @@ static struct kretprobe *tracer_kretprobes[] = {
 	&mutex_lock_probe,
 	&mutex_unlock_probe,
 	&kmalloc_probe,
+	&kfree_probe,
 };
 
 static int tracer_add_process(pid_t pid)
@@ -214,6 +280,7 @@ static int tracer_add_process(pid_t pid)
 		goto error;
 	}
 	td->pid = pid;
+	INIT_LIST_HEAD(&td->mem_list);
 	hash_add(traced_procs_hash, &td->hnode, pid);
 
 error:
@@ -240,8 +307,11 @@ static int tracer_remove_process(pid_t pid)
 
 found:
 	hash_del(&td->hnode);
-	kfree(td);
 	spin_unlock(&traced_procs_lock);
+
+	/* It is ok to free the lock - 'td' is not accessible anymore */
+	free_mem_list(&td->mem_list);
+	kfree(td);
 
 	return 0;
 }
@@ -349,6 +419,7 @@ static void tracer_exit(void)
 	spin_lock(&traced_procs_lock);
 	hash_for_each_safe(traced_procs_hash, i, tmp, td, hnode) {
 		hash_del(&td->hnode);
+		free_mem_list(&td->mem_list);
 		kfree(td);
 	}	
 	spin_unlock(&traced_procs_lock);
