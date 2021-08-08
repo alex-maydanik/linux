@@ -31,6 +31,8 @@ struct proc_dir_entry *proc_tracer;
 
 #define KRETPROBE_MAX_ACTIVE	64
 
+static int tracer_remove_process(pid_t pid);
+
 /* kmalloc() data */
 struct kmalloc_data {
 	void *addr;
@@ -108,7 +110,17 @@ static int kprobe_calls_count_handler(struct kretprobe_instance *ri, struct pt_r
 	}
 
 	spin_unlock(&traced_procs_lock);
-	return 0;
+	return 1; /* No need to hook on return */
+}
+
+static int kprobe_free_task_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
+{
+	struct task_struct *tsk = (struct task_struct *)regs_get_kernel_argument(regs, 0);
+
+	/* We don't care about the return value. If the task isn't traced, nothing is done */
+	tracer_remove_process(task_pid_nr(tsk));
+	
+	return 1; /* No need to hook on return */
 }
 
 static int kprobe_kmalloc_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
@@ -194,7 +206,7 @@ static int kprobe_kfree_entry_handler(struct kretprobe_instance *ri, struct pt_r
 	}
 
 	spin_unlock(&traced_procs_lock);
-	return 0;
+	return 1; /* No need to hook on return */
 }
 
 static struct kretprobe up_probe = {
@@ -241,6 +253,12 @@ static struct kretprobe kfree_probe = {
 	.kp.symbol_name = 	"kfree"
 };
 
+static struct kretprobe free_task_probe = {
+	.entry_handler = 	kprobe_free_task_entry_handler,
+	.maxactive = 		KRETPROBE_MAX_ACTIVE,
+	.kp.symbol_name = 	"free_task"
+};
+
 static struct kretprobe *tracer_kretprobes[] = {
 	&up_probe,
 	&down_probe,
@@ -249,6 +267,7 @@ static struct kretprobe *tracer_kretprobes[] = {
 	&mutex_unlock_probe,
 	&kmalloc_probe,
 	&kfree_probe,
+	&free_task_probe,
 };
 
 static int tracer_add_process(pid_t pid)
@@ -289,7 +308,6 @@ error:
 	return ret;
 }
 
-/* TODO: Call in case process is killed / finished running */
 static int tracer_remove_process(pid_t pid)
 {
 	struct trace_data *td;
