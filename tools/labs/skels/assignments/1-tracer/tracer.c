@@ -42,14 +42,13 @@ struct kmalloc_data {
 	struct list_head list;
 };
 
-/* 
- * Important - this function may be called without mem_list_lock,
- * as long as the call is afterwards 'trace_data' isn't accessible anymore.
- */ 
-static void free_mem_list(struct list_head *mem_list)
+/*
+ * Important - this function must be called with mem_list_lock held
+ */
+static void free_mem_list_locked(struct list_head *mem_list)
 {
 	struct list_head *i, *n;
-	struct kmalloc_data *mem_data;	
+	struct kmalloc_data *mem_data;
 
 	list_for_each_safe(i, n, mem_list) {
 		mem_data = list_entry(i, struct kmalloc_data, list);
@@ -64,6 +63,9 @@ static void free_mem_list(struct list_head *mem_list)
  */
 struct trace_data {
 	pid_t pid;
+
+	/* Used to mark dead processes for delayed freeing */
+	atomic_t is_dead;
 
 	/* In bytes */
 	atomic64_t kmalloc_mem;
@@ -89,20 +91,67 @@ struct trace_data {
 static DEFINE_HASHTABLE(traced_procs_hash, TRACED_PROCS_HASH_BITS);
 static DEFINE_MUTEX(traced_procs_lock);
 
+/* Kthread responsible for freeing dead traced process data */
+struct task_struct *free_task_kthread;
+
+int free_task_kthread_func(void *data)
+{
+	struct trace_data *td;
+	struct hlist_node *tmp;
+	int i;
+	unsigned long flags;
+
+	while (!kthread_should_stop()) {
+		mutex_lock(&traced_procs_lock);
+		hash_for_each_safe(traced_procs_hash, i, tmp, td, hnode) {
+			if (atomic_read(&td->is_dead)) {
+				hash_del_rcu(&td->hnode);
+				synchronize_rcu();
+
+				spin_lock_irqsave(&td->mem_list_lock, flags);
+				free_mem_list_locked(&td->mem_list);
+				spin_unlock_irqrestore(&td->mem_list_lock, flags);
+
+				kfree(td);
+			}
+		}
+		mutex_unlock(&traced_procs_lock);
+
+		set_current_state(TASK_INTERRUPTIBLE);
+		schedule();
+	}
+
+	do_exit(0);
+}
+
 static int kprobe_free_task_entry_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
+	struct trace_data *td;
 	struct task_struct *tsk = (struct task_struct *)regs_get_kernel_argument(regs, 0);
+	pid_t pid = task_pid_nr(tsk);
+	int is_found = 0;
 
-	/* We don't care about the return value. If the task isn't traced, nothing is done */
-	// tracer_remove_process(task_pid_nr(tsk));
-	
+	/* Mark task for removal */
+	rcu_read_lock();
+	hash_for_each_possible_rcu(traced_procs_hash, td, hnode, pid) {
+		if (td->pid == pid) {
+			atomic_set(&td->is_dead, 1);
+			is_found = 1;
+			break;
+		}
+	}
+	rcu_read_unlock();
+
+	if (is_found)
+		wake_up_process(free_task_kthread);
+
 	return 1; /* No need to hook on return */
 }
 
 static int kprobe_calls_count_handler(struct kretprobe_instance *ri, struct pt_regs *regs)
 {
 	struct trace_data *td;
-	const char* symbol_name;
+	const char *symbol_name;
 	pid_t pid = task_pid_nr(ri->task);
 
 	rcu_read_lock();
@@ -157,7 +206,7 @@ static int kprobe_kmalloc_ret_handler(struct kretprobe_instance *ri, struct pt_r
 	rcu_read_lock();
 	hash_for_each_possible_rcu(traced_procs_hash, td, hnode, task_pid_nr(ri->task)) {
 		if (td->pid == task_pid_nr(ri->task)) {
-			data->addr = (void*)regs_return_value(regs);
+			data->addr = (void *)regs_return_value(regs);
 
 			/* Check if memory allocation is successful */
 			if (data->addr) {
@@ -172,7 +221,6 @@ static int kprobe_kmalloc_ret_handler(struct kretprobe_instance *ri, struct pt_r
 					copy->addr = data->addr;
 					copy->size = data->size;
 
-					/* We only need to lock when adding to mem_list */
 					spin_lock_irqsave(&td->mem_list_lock, flags);
 					list_add_rcu(&copy->list, &td->mem_list);
 					spin_unlock_irqrestore(&td->mem_list_lock, flags);
@@ -191,21 +239,25 @@ static int kprobe_kfree_entry_handler(struct kretprobe_instance *ri, struct pt_r
 	struct trace_data *td;
 	void *addr;
 	struct kmalloc_data *mem_data;
-	
+	unsigned long flags;
+
 	rcu_read_lock();
 	hash_for_each_possible_rcu(traced_procs_hash, td, hnode, task_pid_nr(ri->task)) {
 		if (td->pid == task_pid_nr(ri->task)) {
 			atomic64_inc(&td->kfree_calls);
 
 			/* Lookup for allocated memory data */
-			addr = (void*)regs_get_kernel_argument(regs, 0);
-			list_for_each_entry_rcu(mem_data, &td->mem_list, list) {
+			addr = (void *)regs_get_kernel_argument(regs, 0);
+
+			spin_lock_irqsave(&td->mem_list_lock, flags);
+			list_for_each_entry(mem_data, &td->mem_list, list) {
 				if (mem_data->addr == addr) {
 					atomic64_add(mem_data->size, &td->kfree_mem);
 					mem_data->addr = 0; /* Invalidate the entry */
 					break;
 				}
 			}
+			spin_unlock_irqrestore(&td->mem_list_lock, flags);
 
 			break;
 		}
@@ -216,53 +268,53 @@ static int kprobe_kfree_entry_handler(struct kretprobe_instance *ri, struct pt_r
 }
 
 static struct kretprobe up_probe = {
-	.entry_handler = 	kprobe_calls_count_handler,
-	.maxactive = 		KRETPROBE_MAX_ACTIVE,
-	.kp.symbol_name = 	"up"
+	.entry_handler =	kprobe_calls_count_handler,
+	.maxactive =		KRETPROBE_MAX_ACTIVE,
+	.kp.symbol_name =	"up"
 };
 
 static struct kretprobe down_probe = {
-	.entry_handler = 	kprobe_calls_count_handler,
-	.maxactive = 		KRETPROBE_MAX_ACTIVE,
-	.kp.symbol_name = 	"down_interruptible"
+	.entry_handler =	kprobe_calls_count_handler,
+	.maxactive =		KRETPROBE_MAX_ACTIVE,
+	.kp.symbol_name =	"down_interruptible"
 };
 
 static struct kretprobe schedule_probe = {
-	.entry_handler = 	kprobe_calls_count_handler,
-	.maxactive = 		KRETPROBE_MAX_ACTIVE,
-	.kp.symbol_name = 	"schedule"
+	.entry_handler =	kprobe_calls_count_handler,
+	.maxactive =		KRETPROBE_MAX_ACTIVE,
+	.kp.symbol_name =	"schedule"
 };
 
 static struct kretprobe mutex_lock_probe = {
-	.entry_handler = 	kprobe_calls_count_handler,
-	.maxactive = 		KRETPROBE_MAX_ACTIVE,
-	.kp.symbol_name = 	"mutex_lock_nested"
+	.entry_handler =	kprobe_calls_count_handler,
+	.maxactive =		KRETPROBE_MAX_ACTIVE,
+	.kp.symbol_name =	"mutex_lock_nested"
 };
 
 static struct kretprobe mutex_unlock_probe = {
-	.entry_handler = 	kprobe_calls_count_handler,
-	.maxactive = 		KRETPROBE_MAX_ACTIVE,
-	.kp.symbol_name = 	"mutex_unlock"
+	.entry_handler =	kprobe_calls_count_handler,
+	.maxactive =		KRETPROBE_MAX_ACTIVE,
+	.kp.symbol_name =	"mutex_unlock"
 };
 
 static struct kretprobe kmalloc_probe = {
-	.entry_handler = 	kprobe_kmalloc_entry_handler,
+	.entry_handler =	kprobe_kmalloc_entry_handler,
 	.handler =		kprobe_kmalloc_ret_handler,
-	.maxactive = 		KRETPROBE_MAX_ACTIVE,
+	.maxactive =		KRETPROBE_MAX_ACTIVE,
 	.data_size =		sizeof(struct kmalloc_data),
-	.kp.symbol_name = 	"__kmalloc"
+	.kp.symbol_name =	"__kmalloc"
 };
 
 static struct kretprobe kfree_probe = {
-	.entry_handler = 	kprobe_kfree_entry_handler,
-	.maxactive = 		KRETPROBE_MAX_ACTIVE,
-	.kp.symbol_name = 	"kfree"
+	.entry_handler =	kprobe_kfree_entry_handler,
+	.maxactive =		KRETPROBE_MAX_ACTIVE,
+	.kp.symbol_name =	"kfree"
 };
 
 static struct kretprobe free_task_probe = {
-	.entry_handler = 	kprobe_free_task_entry_handler,
-	.maxactive = 		KRETPROBE_MAX_ACTIVE,
-	.kp.symbol_name = 	"free_task"
+	.entry_handler =	kprobe_free_task_entry_handler,
+	.maxactive =		KRETPROBE_MAX_ACTIVE,
+	.kp.symbol_name =	"free_task"
 };
 
 static struct kretprobe *tracer_kretprobes[] = {
@@ -283,7 +335,7 @@ static int tracer_add_process(pid_t pid)
 
 	/* Check if process exists in the system */
 	if (!find_vpid(pid)) {
-		pr_err("%s: Error - Process with pid %d doesn't exists\n", __FUNCTION__, pid);
+		pr_err("%s: Error - Process with pid %d doesn't exists\n", __func__, pid);
 		ret = -ESRCH;
 		goto error;
 	}
@@ -293,12 +345,12 @@ static int tracer_add_process(pid_t pid)
 	/* Check if process is already being traced */
 	hash_for_each_possible(traced_procs_hash, td, hnode, pid) {
 		if (td->pid == pid) {
-			pr_err("%s: Error - Process with pid %d is already traced\n", __FUNCTION__, pid);
+			pr_err("%s: Error - Process with pid %d is already traced\n", __func__, pid);
 			ret = -EEXIST;
 			goto error;
 		}
 	}
-		
+
 	td = kzalloc(sizeof(*td), GFP_KERNEL);
 	if (!td) {
 		ret = -ENOMEM;
@@ -318,6 +370,7 @@ error:
 static int tracer_remove_process(pid_t pid)
 {
 	struct trace_data *td;
+	unsigned long flags;
 
 	mutex_lock(&traced_procs_lock);
 
@@ -335,7 +388,11 @@ found:
 	mutex_unlock(&traced_procs_lock);
 
 	synchronize_rcu();
-	free_mem_list(&td->mem_list);
+
+	spin_lock_irqsave(&td->mem_list_lock, flags);
+	free_mem_list_locked(&td->mem_list);
+	spin_unlock_irqrestore(&td->mem_list_lock, flags);
+
 	kfree(td);
 
 	return 0;
@@ -346,7 +403,7 @@ tracer_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	int ret = 0;
 
-	switch(cmd) {
+	switch (cmd) {
 	case TRACER_ADD_PROCESS:
 		ret = tracer_add_process((pid_t)arg);
 		break;
@@ -417,16 +474,26 @@ static int tracer_init(void)
 	ret = misc_register(&tracer_device);
 	if (ret != 0)
 		return ret;
-		
+
 	proc_tracer = proc_create(TRACER_PROCFS_NAME, 0000, proc_tracer, &r_pops);
 	if (!proc_tracer) {
 		ret = -ENOMEM;
 		goto error;
 	}
 
-	ret = register_kretprobes(tracer_kretprobes, ARRAY_SIZE(tracer_kretprobes));
-	if (ret != 0)
+	free_task_kthread = kthread_create(free_task_kthread_func, NULL,
+						"%skthread%d",
+						"free_traced_processes", 0);
+	if (IS_ERR(free_task_kthread)) {
+		ret = PTR_ERR(free_task_kthread);
 		goto error;
+	}
+
+	ret = register_kretprobes(tracer_kretprobes, ARRAY_SIZE(tracer_kretprobes));
+	if (ret != 0) {
+		kthread_stop(free_task_kthread);
+		goto error;
+	}
 
 	return 0;
 
@@ -441,15 +508,22 @@ static void tracer_exit(void)
 	struct trace_data *td;
 	struct hlist_node *tmp;
 	int i;
+	unsigned long flags;
+
+	kthread_stop(free_task_kthread);
 
 	/* Free hash table */
 	mutex_lock(&traced_procs_lock);
 	hash_for_each_safe(traced_procs_hash, i, tmp, td, hnode) {
 		hash_del_rcu(&td->hnode);
 		synchronize_rcu();
-		free_mem_list(&td->mem_list);
+
+		spin_lock_irqsave(&td->mem_list_lock, flags);
+		free_mem_list_locked(&td->mem_list);
+		spin_unlock_irqrestore(&td->mem_list_lock, flags);
+
 		kfree(td);
-	}	
+	}
 	mutex_unlock(&traced_procs_lock);
 
 	proc_remove(proc_tracer);
