@@ -1,0 +1,12 @@
+☐ Implement driver skeleton
+    ☐ init(), exit() functions
+    ☐ device_data structure
+    ☐ read(), write(), ioctl() fops skeletons
+☐ Add support for module parameters
+☐ Read datasheet and understand how to work
+☐ Registers IO ports and irqs()
+☐ Implement read()
+☐ Implement write()
+☐ Implement ioctl()
+☐ Testing & fixes
+☐ Checkpatch & stuff
