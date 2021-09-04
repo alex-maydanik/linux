@@ -3,10 +3,13 @@
     - device_data structure
     - read(), write(), ioctl() fops skeletons
 ✔ Add support for module parameters @done(21-09-04 13:13)
-☐ Read datasheet and understand how to work
-☐ Registers IO ports and irqs()
+✔ Read datasheet and understand how to work @done(21-09-04 13:45)
+✔ Registers IO ports @done(21-09-04 14:53)
+☐ Initialize HW registers
+☐ Implement ioctl()
+☐ Register IRQs
+    - Add IRQ switch, including support for error cases
 ☐ Implement read()
 ☐ Implement write()
-☐ Implement ioctl()
 ☐ Testing & fixes
 ☐ Checkpatch & stuff
