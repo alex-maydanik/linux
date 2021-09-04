@@ -2,7 +2,7 @@
     - init(), exit() functions
     - device_data structure
     - read(), write(), ioctl() fops skeletons
-☐ Add support for module parameters
+✔ Add support for module parameters @done(21-09-04 13:13)
 ☐ Read datasheet and understand how to work
 ☐ Registers IO ports and irqs()
 ☐ Implement read()
