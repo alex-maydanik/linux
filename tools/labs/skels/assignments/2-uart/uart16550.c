@@ -134,6 +134,59 @@ static void set_communication_params(int minor)
 static long
 uart16550_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
+	struct uart16550 *dev = (struct uart16550 *) file->private_data;
+	int minor = iminor(file->f_path.dentry->d_inode);
+	struct uart16550_line_info new_line_info;
+
+	if (cmd != UART16550_IOCTL_SET_LINE)
+		return -EINVAL;
+
+	if (copy_from_user(&new_line_info, (struct uart16550 *)arg, sizeof(new_line_info)) != 0)
+		return -EFAULT;
+
+	/* Line Info validation */
+	if (new_line_info.baud != UART16550_BAUD_1200 &&
+		new_line_info.baud != UART16550_BAUD_2400 &&
+		new_line_info.baud != UART16550_BAUD_4800 &&
+		new_line_info.baud != UART16550_BAUD_9600 &&
+		new_line_info.baud != UART16550_BAUD_19200 &&
+		new_line_info.baud != UART16550_BAUD_38400 &&
+		new_line_info.baud != UART16550_BAUD_56000 &&
+		new_line_info.baud != UART16550_BAUD_115200) {
+		pr_err("%s: invalid baud rate provided\n", MODULE_NAME);
+		return -EINVAL;
+	}
+
+	if (new_line_info.len != UART16550_LEN_5 &&
+		new_line_info.len != UART16550_LEN_6 &&
+		new_line_info.len != UART16550_LEN_7 &&
+		new_line_info.len != UART16550_LEN_8) {
+		pr_err("%s: invalid word length provided\n", MODULE_NAME);
+		return -EINVAL;
+	}
+
+	if (new_line_info.par != UART16550_PAR_NONE &&
+		new_line_info.par != UART16550_PAR_ODD &&
+		new_line_info.par != UART16550_PAR_EVEN &&
+		new_line_info.par != UART16550_PAR_STICK) {
+		pr_err("%s: invalid parity provided\n", MODULE_NAME);
+		return -EINVAL;
+	}
+
+	if (new_line_info.stop != UART16550_STOP_1 &&
+		new_line_info.stop != UART16550_STOP_2) {
+		pr_err("%s: invalid number of stop bits provided\n", MODULE_NAME);
+		return -EINVAL;
+	}
+
+	/* Update line info parameters in HW */
+	dev->line_info = new_line_info;
+
+	disable_interrupts(minor);
+	reset_fifo(minor);
+	set_communication_params(minor);
+	enable_interrupts(minor);
+
 	return 0;
 }
 
@@ -202,8 +255,8 @@ static int uart16550_init_minor(int minor)
 
 	/* Initialize HW */
 	disable_interrupts(minor);
-	set_communication_params(minor);
 	reset_fifo(minor);
+	set_communication_params(minor);
 	enable_interrupts(minor);
 
 	/* Character device initialization */

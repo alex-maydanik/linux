@@ -5,8 +5,9 @@
 ✔ Add support for module parameters @done(21-09-04 13:13)
 ✔ Read datasheet and understand how to work @done(21-09-04 13:45)
 ✔ Registers IO ports @done(21-09-04 14:53)
-☐ Initialize HW registers
-☐ Implement ioctl()
+✔ Initialize HW registers @done(21-09-04 22:33)
+✔ Implement ioctl() @done(21-09-04 23:07)
+☐ Add spinlock to device
 ☐ Register IRQs
     - Add IRQ switch, including support for error cases
 ☐ Implement read()
