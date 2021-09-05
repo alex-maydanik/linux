@@ -9,7 +9,7 @@
 ✔ Implement ioctl() @done(21-09-04 23:07)
 ✔ Add spinlock to device @done(21-09-05 14:06)
 ✔ Register IRQs & implement handler skeleton @done(21-09-05 15:13)
-☐ Implement read()
+✔ Implement read() @done(21-09-05 17:51)
 ☐ Implement write()
 ☐ Testing & fixes
 ☐ Checkpatch & stuff
