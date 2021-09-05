@@ -387,15 +387,15 @@ generic_test(const char *reader, const char *writer, int speed_set,
 		sprintf(dbuf, "insmod %s", reader);
 		sprintf(cbuf, "insmod %s.ko option=%d",
 				reader, OPTION_COM2_ONLY);
-		fatal_test(dbuf, system(cbuf), 0);
+		err |= fatal_test(dbuf, system(cbuf), 0);
 		sprintf(dbuf, "insmod %s", writer);
 		sprintf(cbuf, "insmod %s.ko option=%d",
 				writer, OPTION_COM1_ONLY);
-		fatal_test(dbuf, system(cbuf), 0);
+		err |= fatal_test(dbuf, system(cbuf), 0);
 	} else {
 		sprintf(dbuf, "insmod %s", reader);
 		sprintf(cbuf, "insmod %s.ko", reader);
-		fatal_test(dbuf, system(cbuf), 0);
+		err |= fatal_test(dbuf, system(cbuf), 0);
 	}
 
 	gen_params(&uli, speed_set);
@@ -412,7 +412,7 @@ generic_test(const char *reader, const char *writer, int speed_set,
 
 	for (i = 0; i < num_tests; i++) {
 		sprintf(dbuf, "test %02d", i + 1);
-		test(dbuf, copy_test(fd0, fd1, speed_set), 0);
+		err |= test(dbuf, copy_test(fd0, fd1, speed_set), 0);
 	}
 
 	close(fd0);
@@ -421,14 +421,14 @@ generic_test(const char *reader, const char *writer, int speed_set,
 	if (reader != writer) {
 		sprintf(dbuf, "rmmod %s", reader);
 		sprintf(cbuf, "rmmod %s.ko", reader);
-		fatal_test(dbuf, system(cbuf), 0);
+		err |= fatal_test(dbuf, system(cbuf), 0);
 		sprintf(dbuf, "rmmod %s", writer);
 		sprintf(cbuf, "rmmod %s.ko", writer);
-		fatal_test(dbuf, system(cbuf), 0);
+		err |= fatal_test(dbuf, system(cbuf), 0);
 	} else {
 		sprintf(dbuf, "rmmod %s", reader);
 		sprintf(cbuf, "rmmod %s.ko", reader);
-		fatal_test(dbuf, system(cbuf), 0);
+		err |= fatal_test(dbuf, system(cbuf), 0);
 	}
 
 	return err;
