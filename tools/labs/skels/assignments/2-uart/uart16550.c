@@ -12,6 +12,7 @@
 #include <linux/uaccess.h>
 #include <linux/moduleparam.h>
 #include <linux/ioport.h>
+#include <linux/spinlock.h>
 #include <asm/io.h>
 
 #include "uart16550.h"
@@ -63,6 +64,7 @@ struct uart16550 {
 	struct cdev cdev;
 	u32 io_base;
 	struct uart16550_line_info line_info;
+	spinlock_t lock;
 } devs[MAX_NUMBER_DEVICES] = {
 	{
 		.io_base = IO_PORT_BASE_COM1,
@@ -137,6 +139,7 @@ uart16550_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	struct uart16550 *dev = (struct uart16550 *) file->private_data;
 	int minor = iminor(file->f_path.dentry->d_inode);
 	struct uart16550_line_info new_line_info;
+	unsigned long flags;
 
 	if (cmd != UART16550_IOCTL_SET_LINE)
 		return -EINVAL;
@@ -182,10 +185,14 @@ uart16550_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	/* Update line info parameters in HW */
 	dev->line_info = new_line_info;
 
+	spin_lock_irqsave(&dev->lock, flags);
+
 	disable_interrupts(minor);
 	reset_fifo(minor);
 	set_communication_params(minor);
 	enable_interrupts(minor);
+
+	spin_unlock_irqrestore(&dev->lock, flags);
 
 	return 0;
 }
@@ -259,6 +266,8 @@ static int uart16550_init_minor(int minor)
 	set_communication_params(minor);
 	enable_interrupts(minor);
 
+	spin_lock_init(&devs[minor].lock);
+
 	/* Character device initialization */
 	cdev_init(&devs[minor].cdev, &uart16550_fops);
 	err = cdev_add(&devs[minor].cdev, MKDEV(major, minor), 1);
@@ -270,6 +279,8 @@ static int uart16550_init_minor(int minor)
 	return 0;
 
 out_release_region:
+	disable_interrupts(minor);
+	reset_fifo(minor);
 	release_region(devs[minor].io_base, IO_PORT_NUM);
 out:
 	return err;
@@ -278,6 +289,13 @@ out:
 /* Free() for one of 'struct uart16550' devices */
 static void uart16550_free_minor(int minor)
 {
+	unsigned long flags;
+
+	spin_lock_irqsave(&devs[minor].lock, flags);
+	disable_interrupts(minor);
+	reset_fifo(minor);
+	spin_unlock_irqrestore(&devs[minor].lock, flags);
+
 	cdev_del(&devs[minor].cdev);
 	release_region(devs[minor].io_base, IO_PORT_NUM);
 }
