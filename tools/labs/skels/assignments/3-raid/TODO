@@ -1,0 +1,9 @@
+☐ Register SSR block device & disk
+☐ Fill gendisk structure, add fops skeletons
+☐ Implement submit_bio(), including request parsing
+☐ Add workqueues for processing requests to physical devices
+☐ Implement basic write functionality
+☐ Implement basic read functionality
+☐ Add crc32 handling
+☐ Make sure all tests pass
+☐ Make sure static analyzers pass
