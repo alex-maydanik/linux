@@ -17,6 +17,8 @@
 #include <linux/bio.h>
 #include <linux/vmalloc.h>
 
+#include <linux/workqueue.h>
+
 #include "ssr.h"
 
 MODULE_DESCRIPTION("Simple Software RAID");
@@ -28,46 +30,51 @@ MODULE_LICENSE("GPL v2");
 static struct ssr_block_dev {
 	struct gendisk *logical_disk;
 	struct request_queue *queue;
+	struct block_device *physical_disk1, *physical_disk2;
+
+	/* Work queue for submitting bio requests to the physical disks */
+	struct workqueue_struct *physical_wq;
 } ssr_dev;
 
-static int ssr_block_transfer(struct ssr_block_dev *dev, sector_t sector,
-		unsigned long len, char *buffer, int dir)
+/* Struct representing a single bio request work item */
+struct ssr_bio_req {
+	struct ssr_block_dev *dev;
+	struct bio *bio;
+	struct work_struct work;
+	int err; /* 0 - success or ERRNO */
+};
+
+static void ssr_bio_rq_work_handler(struct work_struct *work)
 {
-	unsigned long offset = sector * KERNEL_SECTOR_SIZE;
+	struct ssr_bio_req *rq = container_of(work, struct ssr_bio_req, work);
 
-	/* Check for read/write beyond end of block device */
-	if ((offset + len) > LOGICAL_DISK_SIZE)
-		return -ENOSPC;
-
-	return 0;
+	pr_info("SSR: got bio request\n");
 }
 
 static blk_qc_t ssr_submit_bio(struct bio *bio)
 {
 	struct ssr_block_dev *dev = bio->bi_disk->private_data;
-	struct bio_vec bvec;
-	struct bvec_iter iter;
-	int dir = bio_data_dir(bio);
-	int err;
+	struct ssr_bio_req *rq = kzalloc(sizeof(*rq), GFP_ATOMIC);
+	if (!rq)
+		goto io_error;
 
-	bio_for_each_segment(bvec, bio, iter) {
-		sector_t sector = iter.bi_sector;
-		unsigned long offset = bvec.bv_offset;
-        	size_t len = bvec.bv_len;
-		char *buffer = kmap_atomic(bvec.bv_page);
+	/* Initialize ssr_bio_req work item and send it to work queue for processing */
+	rq->dev = dev;
+	rq->bio = bio;
+	INIT_WORK(&rq->work, ssr_bio_rq_work_handler);
 
-		pr_debug("SSR: Got BIO: sector %llu offset %lu len %u dir %c\n", sector, offset, len, dir ? 'W' : 'R');
+	queue_work(dev->physical_wq, &rq->work);
+	flush_workqueue(dev->physical_wq);
 
-		err = ssr_block_transfer(dev, sector, len, buffer + offset, dir);
-		kunmap_atomic(buffer);
+	if (rq->err < 0)
+		goto io_error;
 
-		if (err < 0)
-			goto io_error;
-	}
-
+	kfree(rq);
 	bio_endio(bio);
 	return BLK_QC_T_NONE;
+
 io_error:
+	kfree(rq);
 	bio_io_error(bio);
 	return BLK_QC_T_NONE;
 }
@@ -129,13 +136,39 @@ static int __init ssr_init(void)
 		return -EBUSY;
 	}
 
-	err = create_block_device(&ssr_dev);
-	if (err < 0)
+	ssr_dev.physical_wq = create_singlethread_workqueue(SSR_MODULE_NAME "_wq");
+	if (!ssr_dev.physical_wq) {
+		pr_err("SSR: Failed to create workqueue.\n");
+		err = -ENOMEM;
 		goto error;
+	}
+
+	/* Get physical disks 'block_device' struct */
+	ssr_dev.physical_disk1 = blkdev_get_by_path(PHYSICAL_DISK1_NAME, FMODE_READ|FMODE_WRITE, THIS_MODULE);
+	ssr_dev.physical_disk2 = blkdev_get_by_path(PHYSICAL_DISK2_NAME, FMODE_READ|FMODE_WRITE, THIS_MODULE);
+	if (!ssr_dev.physical_disk1 || !ssr_dev.physical_disk2) {
+		pr_err("SSR: Failed to access physical disk. blkdev_get_by_path() failed.\n");
+		err = -EINVAL;
+		goto error;
+	}
+
+	err = create_block_device(&ssr_dev);
+	if (err < 0) {
+		pr_err("SSR: failed to create SSR block device\n");
+		goto error;
+	}
 
 	return 0;
 
 error:
+	if (ssr_dev.physical_disk1)
+		blkdev_put(ssr_dev.physical_disk1, FMODE_READ|FMODE_WRITE);
+	if (ssr_dev.physical_disk2)
+		blkdev_put(ssr_dev.physical_disk2, FMODE_READ|FMODE_WRITE);
+
+	if (ssr_dev.physical_wq)
+		destroy_workqueue(ssr_dev.physical_wq);
+
 	unregister_blkdev(SSR_MAJOR, SSR_MODULE_NAME);
 	return err;
 }
@@ -143,6 +176,12 @@ error:
 static void ssr_exit(void)
 {
 	delete_block_device(&ssr_dev);
+
+	blkdev_put(ssr_dev.physical_disk1, FMODE_READ|FMODE_WRITE);
+	blkdev_put(ssr_dev.physical_disk2, FMODE_READ|FMODE_WRITE);
+
+	destroy_workqueue(ssr_dev.physical_wq);
+
 	unregister_blkdev(SSR_MAJOR, SSR_MODULE_NAME);
 }
 

@@ -1,11 +1,12 @@
 ✔ Register SSR block device & disk @done(21-10-22 19:52)
 ✔ Fill gendisk structure, add fops skeletons @done(21-10-23 15:07)
 ✔ Implement submit_bio(), including request parsing @done(21-10-23 15:44)
-☐ Add physical disks access
-☐ Add workqueues for processing requests to physical devices
+✔ Add physical disks access @done(21-10-23 16:04)
+✔ Add workqueues for processing requests to physical devices @done(21-10-23 17:57)
 ☐ Implement basic write functionality
 ☐ Implement basic read functionality
-☐ Add crc32 handling
+☐ Add crc32 handling for write
+☐ Add crc32 handling for read
 ☐ Add locks if required
 ☐ Add refcount for device if required
 ☐ Make sure all tests pass
