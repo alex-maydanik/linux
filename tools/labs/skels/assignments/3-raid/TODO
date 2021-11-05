@@ -3,8 +3,8 @@
 ✔ Implement submit_bio(), including request parsing @done(21-10-23 15:44)
 ✔ Add physical disks access @done(21-10-23 16:04)
 ✔ Add workqueues for processing requests to physical devices @done(21-10-23 17:57)
-☐ Implement basic write functionality
-☐ Implement basic read functionality
+✔ Implement basic write functionality @done(21-11-05 16:02)
+✔ Implement basic read functionality @done(21-11-05 16:02)
 ☐ Add crc32 handling for write
 ☐ Add crc32 handling for read
 ☐ Add locks if required

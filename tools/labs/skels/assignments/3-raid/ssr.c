@@ -34,11 +34,14 @@ static struct ssr_block_dev {
 
 	/* Work queue for submitting bio requests to the physical disks */
 	struct workqueue_struct *physical_wq;
+	/* bio_set for cloned BIO requests */
+	struct bio_set ssr_bioset;
 } ssr_dev;
 
 /* Struct representing a single bio request work item */
 struct ssr_bio_req {
 	struct ssr_block_dev *dev;
+	struct block_device *phy_dev; /* Physical device targeted by bio_req */
 	struct bio *bio;
 	struct work_struct work;
 	int err; /* 0 - success or ERRNO */
@@ -47,34 +50,65 @@ struct ssr_bio_req {
 static void ssr_bio_rq_work_handler(struct work_struct *work)
 {
 	struct ssr_bio_req *rq = container_of(work, struct ssr_bio_req, work);
+	struct ssr_block_dev *dev = rq->dev;
 
-	pr_info("SSR: got bio request\n");
+	struct bio *bio_copy = bio_clone_fast(rq->bio, GFP_KERNEL, &dev->ssr_bioset);
+	if (!bio_copy) {
+		rq->err = -ENOMEM;
+		return;
+	}
+	bio_copy->bi_disk = rq->phy_dev->bd_disk;
+	
+	rq->err = submit_bio_wait(bio_copy);
+	bio_put(bio_copy);
 }
 
-static blk_qc_t ssr_submit_bio(struct bio *bio)
+/* Creates bio request and submits to the specified physical device */
+static int _ssr_submit_bio(struct bio *bio, struct block_device *phy_dev)
 {
+	int err;
 	struct ssr_block_dev *dev = bio->bi_disk->private_data;
 	struct ssr_bio_req *rq = kzalloc(sizeof(*rq), GFP_ATOMIC);
-	if (!rq)
-		goto io_error;
+	if (!rq) {
+		err = -ENOMEM;
+		goto end;
+	}	
 
 	/* Initialize ssr_bio_req work item and send it to work queue for processing */
 	rq->dev = dev;
+	rq->phy_dev = phy_dev;
 	rq->bio = bio;
 	INIT_WORK(&rq->work, ssr_bio_rq_work_handler);
 
 	queue_work(dev->physical_wq, &rq->work);
 	flush_workqueue(dev->physical_wq);
+	err = rq->err;
 
-	if (rq->err < 0)
-		goto io_error;
+end:
+	if (rq)
+		kfree(rq);
+	return err;
+}
 
-	kfree(rq);
+static blk_qc_t ssr_submit_bio(struct bio *bio)
+{
+	struct ssr_block_dev *dev = bio->bi_disk->private_data;
+
+	if (bio_data_dir(bio) == READ) {
+		if (_ssr_submit_bio(bio, dev->physical_disk1) != 0)
+			goto bio_error;
+	} else {
+		/* Write */
+		if (_ssr_submit_bio(bio, dev->physical_disk1) != 0)
+			goto bio_error;
+		if (_ssr_submit_bio(bio, dev->physical_disk2) != 0)
+			goto bio_error;
+	}
+
 	bio_endio(bio);
 	return BLK_QC_T_NONE;
 
-io_error:
-	kfree(rq);
+bio_error:
 	bio_io_error(bio);
 	return BLK_QC_T_NONE;
 }
@@ -136,6 +170,12 @@ static int __init ssr_init(void)
 		return -EBUSY;
 	}
 
+	err = bioset_init(&ssr_dev.ssr_bioset, BIO_POOL_SIZE, 0, 0);
+	if (err < 0) {
+		pr_err("SSR: unable to initialize bioset\n");
+		goto error;
+	}
+
 	ssr_dev.physical_wq = create_singlethread_workqueue(SSR_MODULE_NAME "_wq");
 	if (!ssr_dev.physical_wq) {
 		pr_err("SSR: Failed to create workqueue.\n");
@@ -169,6 +209,7 @@ error:
 	if (ssr_dev.physical_wq)
 		destroy_workqueue(ssr_dev.physical_wq);
 
+	bioset_exit(&ssr_dev.ssr_bioset);
 	unregister_blkdev(SSR_MAJOR, SSR_MODULE_NAME);
 	return err;
 }
@@ -181,6 +222,7 @@ static void ssr_exit(void)
 	blkdev_put(ssr_dev.physical_disk2, FMODE_READ|FMODE_WRITE);
 
 	destroy_workqueue(ssr_dev.physical_wq);
+	bioset_exit(&ssr_dev.ssr_bioset);
 
 	unregister_blkdev(SSR_MAJOR, SSR_MODULE_NAME);
 }
