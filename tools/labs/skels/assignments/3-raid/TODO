@@ -5,9 +5,8 @@
 ✔ Add workqueues for processing requests to physical devices @done(21-10-23 17:57)
 ✔ Implement basic write functionality @done(21-11-05 16:02)
 ✔ Implement basic read functionality @done(21-11-05 16:02)
-☐ Add crc32 handling for write
+✔ Add crc32 handling for write @done(21-11-13 22:21)
 ☐ Add crc32 handling for read
-☐ Add locks if required
-☐ Add refcount for device if required
+✔ Add locks if required @done(21-11-13 22:21)
 ☐ Make sure all tests pass
 ☐ Make sure static analyzers pass
