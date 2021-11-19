@@ -57,14 +57,14 @@ static void ssr_bio_rq_work_handler(struct work_struct *work)
 {
 	struct ssr_bio_req *rq = container_of(work, struct ssr_bio_req, work);
 	struct ssr_block_dev *dev = rq->dev;
-
 	struct bio *bio_copy = bio_clone_fast(rq->bio, GFP_NOIO, &dev->ssr_bioset);
+
 	if (!bio_copy) {
 		rq->err = -ENOMEM;
 		return;
 	}
 	bio_copy->bi_disk = rq->phy_dev->bd_disk;
-	
+
 	rq->err = submit_bio_wait(bio_copy);
 	bio_put(bio_copy);
 }
@@ -72,6 +72,7 @@ static void ssr_bio_rq_work_handler(struct work_struct *work)
 static inline sector_t sector_to_crc32_sector(sector_t sector)
 {
 	sector_t crc32_sector = sector * sizeof(u32) / KERNEL_SECTOR_SIZE;
+
 	return LOGICAL_DISK_SECTORS + crc32_sector;
 }
 
@@ -80,7 +81,7 @@ static inline unsigned int sector_to_crc32_sector_offset(sector_t sector)
 	return (sector * sizeof(u32)) % KERNEL_SECTOR_SIZE;
 }
 
-/* 
+/*
  * Allocates and returns `bio` request for reading crc32 sectors matching `data_bio`.
  * Caller is responsible to free both physical pages and the bio struct.
  */
@@ -90,12 +91,12 @@ static struct bio *ssr_create_crc32_bio_read(struct bio *data_bio)
 	sector_t sector = data_bio->bi_iter.bi_sector;
 	u32 num_sectors = bio_sectors(data_bio);
 	u32 num_crc32_pages = roundup(num_sectors * sizeof(u32), PAGE_SIZE) / PAGE_SIZE;
-	
 	struct bio *bio_crc32 = bio_alloc(GFP_NOIO, num_crc32_pages);
+
 	if (!bio_crc32)
 		return NULL;
-	
-	/* 
+
+	/*
 	 * Specify start sector & direction.
 	 */
 	bio_crc32->bi_disk = data_bio->bi_disk;
@@ -105,6 +106,7 @@ static struct bio *ssr_create_crc32_bio_read(struct bio *data_bio)
 	/* Allocate and add pages */
 	for (i = 0; i < num_crc32_pages; i++) {
 		struct page *page = alloc_page(GFP_NOIO);
+
 		if (!page)
 			goto failure;
 		if (bio_add_page(bio_crc32, page, PAGE_SIZE, 0) != PAGE_SIZE)
@@ -178,10 +180,11 @@ static int _ssr_submit_bio(struct bio *bio, struct block_device *phy_dev)
 	int err;
 	struct ssr_block_dev *dev = bio->bi_disk->private_data;
 	struct ssr_bio_req *rq = kzalloc(sizeof(*rq), GFP_NOIO);
+
 	if (!rq) {
 		err = -ENOMEM;
 		goto end;
-	}	
+	}
 
 	/* Initialize ssr_bio_req work item and send it to work queue for processing */
 	rq->dev = dev;
@@ -194,8 +197,7 @@ static int _ssr_submit_bio(struct bio *bio, struct block_device *phy_dev)
 	err = rq->err;
 
 end:
-	if (rq)
-		kfree(rq);
+	kfree(rq);
 	return err;
 }
 
@@ -212,6 +214,7 @@ static inline int _ssr_write_data_crc(struct bio *bio, struct bio *bio_crc32, st
 {
 	/* Backup bi_opf, and specify write operation */
 	unsigned int bi_opf_backup = bio->bi_opf;
+
 	bio->bi_opf = REQ_OP_WRITE;
 
 	/* Write Data */
@@ -220,7 +223,7 @@ static inline int _ssr_write_data_crc(struct bio *bio, struct bio *bio_crc32, st
 		return -EIO;
 	}
 	bio->bi_opf = bi_opf_backup;
-		
+
 	/* Read relevant CRC sectors */
 	if (_ssr_submit_bio(bio_crc32, phy_dev) != 0)
 		return -EIO;
@@ -272,7 +275,7 @@ static blk_qc_t ssr_submit_bio(struct bio *bio)
 				goto bio_error;
 		}
 	}
-	
+
 	if (bio_crc32) {
 		bio_free_pages(bio_crc32);
 		bio_put(bio_crc32);

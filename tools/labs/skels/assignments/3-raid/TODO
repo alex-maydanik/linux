@@ -9,4 +9,4 @@
 ✔ Add crc32 handling for read @done(21-11-19 17:12)
 ✔ Add locks if required @done(21-11-13 22:21)
 ✔ Make sure all tests pass @done(21-11-19 17:34)
-☐ Make sure static analyzers pass
+✔ Make sure static analyzers pass @done(21-11-19 17:55)
