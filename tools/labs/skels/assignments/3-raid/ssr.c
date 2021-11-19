@@ -119,8 +119,13 @@ failure:
 	return NULL;
 }
 
-/* Computes & updates crc32 over `bio` pages and updates `bio_crc32 */
-static void ssr_compute_crc32(struct bio *bio, struct bio *bio_crc32)
+/*
+ * Computes crc32 over 'bio' pages and compares against 'bio_crc32'.
+ * Returns 0 if crc32 is correct.
+ *
+ * if update == 1: updates crc32 values in 'bio_crc32' and always returns 0.
+ */
+static int ssr_compute_crc32(struct bio *bio, struct bio *bio_crc32, int update)
 {
 	int i;
 	struct bio_vec bvec, bvec_crc32;
@@ -143,7 +148,17 @@ static void ssr_compute_crc32(struct bio *bio, struct bio *bio_crc32)
 					char *crc32_page = kmap_atomic(bvec_crc32.bv_page);
 
 					u32 crc32_offset = sector_to_crc32_sector_offset(sector);
-					memcpy(crc32_page + crc32_offset, &crc32, sizeof(u32));
+
+					if (update) {
+						memcpy(crc32_page + crc32_offset, &crc32, sizeof(u32));
+					} else {
+						if (memcmp(crc32_page + crc32_offset, &crc32, sizeof(u32)) != 0) {
+							/* Invalid crc */
+							kunmap_atomic(crc32_page);
+							kunmap_atomic(data);
+							return -1;
+						}
+					}
 
 					kunmap_atomic(crc32_page);
 					break;
@@ -153,6 +168,8 @@ static void ssr_compute_crc32(struct bio *bio, struct bio *bio_crc32)
 
 		kunmap_atomic(data);
 	}
+
+	return 0;
 }
 
 /* Creates bio request and submits to the specified physical device */
@@ -182,9 +199,43 @@ end:
 	return err;
 }
 
+static inline int _ssr_read_data_crc(struct bio *bio, struct bio *bio_crc32, struct block_device *phy_dev)
+{
+	if (_ssr_submit_bio(bio, phy_dev) != 0)
+		return -EIO;
+	if (_ssr_submit_bio(bio_crc32, phy_dev) != 0)
+		return -EIO;
+	return 0;
+}
+
+static inline int _ssr_write_data_crc(struct bio *bio, struct bio *bio_crc32, struct block_device *phy_dev)
+{
+	/* Backup bi_opf, and specify write operation */
+	unsigned int bi_opf_backup = bio->bi_opf;
+	bio->bi_opf = REQ_OP_WRITE;
+
+	/* Write Data */
+	if (_ssr_submit_bio(bio, phy_dev) != 0) {
+		bio->bi_opf = bi_opf_backup;
+		return -EIO;
+	}
+	bio->bi_opf = bi_opf_backup;
+		
+	/* Read relevant CRC sectors */
+	if (_ssr_submit_bio(bio_crc32, phy_dev) != 0)
+		return -EIO;
+	/* Compute & Update CRC sectors */
+	ssr_compute_crc32(bio, bio_crc32, 1);
+	/* Write back CRC sectors */
+	bio_crc32->bi_opf = REQ_OP_WRITE;
+	if (_ssr_submit_bio(bio_crc32, phy_dev) != 0)
+		return -EIO;
+	return 0;
+}
+
 static blk_qc_t ssr_submit_bio(struct bio *bio)
 {
-	int i;
+	int i, res1, res2;
 	struct ssr_block_dev *dev = bio->bi_disk->private_data;
 	struct bio *bio_crc32 = ssr_create_crc32_bio_read(bio);
 
@@ -193,22 +244,31 @@ static blk_qc_t ssr_submit_bio(struct bio *bio)
 		goto bio_error;
 
 	if (bio_data_dir(bio) == READ) {
-		/* Read */
-		if (_ssr_submit_bio(bio, dev->physical_disks[0]) != 0)
+		/* Read data & crc from both disks and check correctness */
+		if (_ssr_read_data_crc(bio, bio_crc32, dev->physical_disks[0]) != 0)
 			goto bio_error;
+		res1 = ssr_compute_crc32(bio, bio_crc32, 0);
+
+		if (_ssr_read_data_crc(bio, bio_crc32, dev->physical_disks[1]) != 0)
+			goto bio_error;
+		res2 = ssr_compute_crc32(bio, bio_crc32, 0);
+
+		if (res1 != 0 && res2 != 0) {
+			goto bio_error;
+		} else if (res1 != 0) {
+			/* Error recovery for disk1 */
+			if (_ssr_write_data_crc(bio, bio_crc32, dev->physical_disks[0]) != 0)
+				goto bio_error;
+		} else if (res2 != 0) {
+			/* Error recovery for disk2 */
+			if (_ssr_read_data_crc(bio, bio_crc32, dev->physical_disks[0]) != 0)
+				goto bio_error;
+			if (_ssr_write_data_crc(bio, bio_crc32, dev->physical_disks[1]) != 0)
+				goto bio_error;
+		}
 	} else {
 		for (i = 0; i < SSR_NUM_PHYSICAL_DISKS; i++) {
-			/* Write Data */
-			if (_ssr_submit_bio(bio, dev->physical_disks[i]) != 0)
-				goto bio_error;
-			/* Read relevant CRC sectors */
-			if (_ssr_submit_bio(bio_crc32, dev->physical_disks[i]) != 0)
-				goto bio_error;
-			/* Compute & Update CRC sectors */
-			ssr_compute_crc32(bio, bio_crc32);
-			/* Write back CRC sectors */
-			bio_crc32->bi_opf = REQ_OP_WRITE;
-			if (_ssr_submit_bio(bio_crc32, dev->physical_disks[i]) != 0)
+			if (_ssr_write_data_crc(bio, bio_crc32, dev->physical_disks[i]) != 0)
 				goto bio_error;
 		}
 	}

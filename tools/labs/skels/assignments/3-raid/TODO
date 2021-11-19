@@ -6,7 +6,7 @@
 ✔ Implement basic write functionality @done(21-11-05 16:02)
 ✔ Implement basic read functionality @done(21-11-05 16:02)
 ✔ Add crc32 handling for write @done(21-11-13 22:21)
-☐ Add crc32 handling for read
+✔ Add crc32 handling for read @done(21-11-19 17:12)
 ✔ Add locks if required @done(21-11-13 22:21)
-☐ Make sure all tests pass
+✔ Make sure all tests pass @done(21-11-19 17:34)
 ☐ Make sure static analyzers pass
