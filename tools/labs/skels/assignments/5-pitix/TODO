@@ -1,0 +1,9 @@
+☐ Filesystem Registration & Unregistration
+☐ Add support for basic super-block operations
+☐ Initialize root inode (Enable mount/unmount)
+☐ Support inode allocation
+☐ Support regular file operations
+☐ Support directory operations
+☐ Support indirect blocks
+☐ Pass all tests
+☐ Checkpatch and other static analyzers
