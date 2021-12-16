@@ -1,9 +1,13 @@
-☐ Filesystem Registration & Unregistration
-☐ Add support for basic super-block operations
-☐ Initialize root inode (Enable mount/unmount)
-☐ Support inode allocation
-☐ Support regular file operations
-☐ Support directory operations
-☐ Support indirect blocks
+✔ Filesystem Registration & Unregistration @done(21-12-16 10:46)
+✔ Add support for basic super-block operations @done(21-12-16 12:24)
+✔ Initialize root inode (Enable mount/unmount) @done(21-12-16 16:14)
+
+✔ Complete pitix_iget() TODOs @done(21-12-17 13:09)
+☐ Complete read() directory operations & enable `ls` & directory traversal
+☐ Complete read() file operations & enable `stat` and `cat` for files
+    ☐ Add handling for indirect blocks
+
+☐ Write stuff - Define TODOs
+
 ☐ Pass all tests
 ☐ Checkpatch and other static analyzers
