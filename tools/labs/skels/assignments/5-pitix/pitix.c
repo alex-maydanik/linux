@@ -29,12 +29,6 @@ struct pitix_inode_info {
 	struct inode vfs_inode;
 };
 
-struct address_space_operations pitix_aops = {
-	.readpage       = simple_readpage,
-	.write_begin    = simple_write_begin,
-	.write_end      = simple_write_end,
-};
-
 struct file_operations pitix_file_operations = {
 	.read_iter	= generic_file_read_iter,
 	.write_iter	= generic_file_write_iter,
@@ -44,6 +38,64 @@ struct file_operations pitix_file_operations = {
 
 struct inode_operations pitix_file_inode_operations = {
 	.getattr	= simple_getattr,
+};
+
+int pitix_get_block(struct inode *inode, sector_t block,
+		struct buffer_head *bh_result, int create)
+{
+	/* TODO: Support create() */
+	struct pitix_super_block *psb = pitix_sb(inode->i_sb);
+	sector_t disk_block = 0;
+	struct buffer_head *bh;
+	__u16 *indirect_blocks;
+	struct pitix_inode *pi = &(container_of(inode,
+			struct pitix_inode_info, vfs_inode))->p_inode;
+	
+	if (block < INODE_DIRECT_DATA_BLOCKS) {
+		disk_block = pi->direct_data_blocks[block];
+		if (disk_block == 0)
+			return -EIO;
+	} else {
+		/* Indirect data block */
+		if (pi->indirect_data_block == 0)
+			return -EIO;
+		
+		bh = sb_bread(inode->i_sb, psb->dzone_block + pi->indirect_data_block);
+		if (bh == NULL) {
+			pr_err("PITIX: could not read block\n");
+			return -EIO;
+		}
+		indirect_blocks = (__u16 *)bh->b_data;
+		disk_block = indirect_blocks[block - INODE_DIRECT_DATA_BLOCKS];
+
+		if (disk_block == 0) {
+			brelse(bh);
+			return -EIO;
+		}
+
+
+	}
+
+	map_bh(bh_result, inode->i_sb, psb->dzone_block + disk_block);
+	return 0;
+}
+
+static int pitix_readpage(struct file *file, struct page *page)
+{
+	return block_read_full_page(page, pitix_get_block);
+}
+
+static sector_t pitix_bmap(struct address_space *mapping, sector_t block)
+{
+	return generic_block_bmap(mapping, block, pitix_get_block);
+}
+
+struct address_space_operations pitix_aops = {
+	.readpage = pitix_readpage,
+	//.writepage = minix_writepage,
+	//.write_begin = minix_write_begin,
+	//.write_end = generic_write_end,
+	.bmap = pitix_bmap
 };
 
 static struct pitix_dir_entry *pitix_find_entry(struct dentry *dentry,
@@ -385,7 +437,7 @@ out_bad_magic_version:
 out_bad_sb:
 	pr_err("PITIX: error reading buffer_head\n");
 	s->s_fs_info = NULL;
-	kfree(ps);
+	kfree(psi);
 	return ret;
 }
 
@@ -395,11 +447,18 @@ static struct dentry *pitix_mount(struct file_system_type *fs_type,
 	return mount_bdev(fs_type, flags, dev_name, data, pitix_fill_super);
 }
 
+static void pitix_kill_block_super(struct super_block *sb)
+{
+	struct pitix_super_block *psi = pitix_sb(sb);
+	kill_block_super(sb);
+	kfree(psi);
+}
+
 static struct file_system_type pitix_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "pitix",
 	.mount		= pitix_mount,
-	.kill_sb	= kill_block_super,
+	.kill_sb	= pitix_kill_block_super,
 	.fs_flags	= FS_REQUIRES_DEV,
 };
 
