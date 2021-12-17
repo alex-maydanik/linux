@@ -3,7 +3,7 @@
 ✔ Initialize root inode (Enable mount/unmount) @done(21-12-16 16:14)
 
 ✔ Complete pitix_iget() TODOs @done(21-12-17 13:09)
-☐ Complete read() directory operations & enable `ls` & directory traversal
+✔ Complete read() directory operations & enable `ls` & directory traversal @done(21-12-17 14:35)
 ☐ Complete read() file operations & enable `stat` and `cat` for files
     ☐ Add handling for indirect blocks
 

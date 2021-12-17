@@ -342,8 +342,6 @@ test_ro()
         exit 1
     fi
 
-    exit 0 # TODO - Move this stuff :)
-
     for file in $(find /tmp/pitix.ro -type f | cut -f4- -d/); do
         get_file_attrs /tmp/pitix.ro/$file
         check_file $file $size $rights $uid $gid $type /tmp/pitix.ro/
@@ -372,6 +370,8 @@ check_true  "module loading" insmod pitix.ko
 check_true  "test /proc/filesystems" grep pitix /proc/filesystems
 test_ro
 check_true "module unloading" rmmod pitix
+
+exit 0 # TODO: Move this :)
 
 check_true  "module loading" insmod pitix.ko
 check_true  "test /proc/filesystems" grep pitix /proc/filesystems
