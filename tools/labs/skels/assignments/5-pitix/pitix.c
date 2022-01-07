@@ -11,6 +11,8 @@
 #include <linux/fs.h>
 #include <linux/slab.h>
 #include <linux/buffer_head.h>
+#include <linux/statfs.h>
+#include <linux/bitops.h>
 
 #include "pitix.h"
 
@@ -23,6 +25,8 @@ MODULE_LICENSE("GPL v2");
 #define PITIX_SUPER_BLOCK	0
 #define PITIX_VERSION		2
 #define PITIX_ROOT_INODE	0
+
+static DEFINE_SPINLOCK(bitmap_lock);
 
 struct pitix_inode_info {
 	struct pitix_inode p_inode;
@@ -284,6 +288,61 @@ pitix_raw_inode(struct super_block *sb, ino_t ino, struct buffer_head **bh)
 	return p + ino % pitix_inodes_per_block(sb);
 }
 
+int pitix_alloc_inode(struct super_block *sb)
+{
+	struct pitix_super_block *sbi = pitix_sb(sb);
+	struct inode *inode = new_inode(sb);
+	u32 num_inodes = get_inodes(sb);
+	int free_ino;
+
+	if (!inode)
+		return -ENOMEM;
+
+	/* Lookup IMAP for free slot */
+	spin_lock(&bitmap_lock);
+	free_ino = find_first_zero_bit((void*)sbi->imap, num_inodes);
+	if (free_ino >= num_inodes) {
+		spin_unlock(&bitmap_lock);
+		iput(inode);
+		return -ENOSPC;
+	}
+	set_bit(free_ino, (void*)sbi->imap);
+	spin_unlock(&bitmap_lock);
+	mark_buffer_dirty(sbi->imap_bh);
+
+	/* Initialize inode fields */
+	/* TODO: inode_init_owner(inode, dir, mode); */
+	inode->i_ino = free_ino;
+	inode->i_mtime = inode->i_atime = inode->i_ctime = current_time(inode);
+	inode->i_blocks = 0;
+	insert_inode_hash(inode);
+	mark_inode_dirty(inode);
+
+	return free_ino;
+}
+
+void pitix_free_inode(struct super_block *sb, int ino)
+{
+	struct pitix_super_block *sbi = pitix_sb(sb);
+	struct pitix_inode *pi;
+	struct buffer_head *bh = NULL;
+	
+	/* Clear on-disk inode */
+	pi = pitix_raw_inode(sb, ino, &bh);
+	if (!pi) {
+		pr_err("PITIX: inode %d not found\n", ino);
+		return;
+	}
+	memset(pi, 0, sizeof(*pi));
+	mark_buffer_dirty(bh);
+
+	/* Mark inode as unused in IMAP */
+	spin_lock(&bitmap_lock);
+	clear_bit(ino, (void*)sbi->imap);
+	spin_unlock(&bitmap_lock);
+	mark_buffer_dirty(sbi->imap_bh);
+}
+
 struct inode *pitix_iget(struct super_block *sb, unsigned long ino)
 {
 	struct inode *inode;
@@ -349,6 +408,31 @@ static void pitix_put_super(struct super_block *sb)
 	/* Free superblock buffer head. */
 	mark_buffer_dirty(ps->sb_bh);
 	brelse(ps->sb_bh);
+
+	/* Free IMAP & DMAP & Write-Back */
+	mark_buffer_dirty(ps->dmap_bh);
+	brelse(ps->dmap_bh);
+	mark_buffer_dirty(ps->imap_bh);
+	brelse(ps->imap_bh);
+
+	sb->s_fs_info = NULL;
+}
+
+static int pitix_statfs(struct dentry *dentry, struct kstatfs *buf)
+{
+	struct super_block *sb = dentry->d_sb;
+	struct pitix_super_block *sbi = pitix_sb(sb);
+
+	buf->f_type = sb->s_magic;
+	buf->f_bsize = sb->s_blocksize;
+	buf->f_blocks = get_blocks(sb);
+	buf->f_bfree = sbi->bfree;
+	buf->f_bavail = buf->f_bfree;
+	buf->f_files = get_inodes(sb);
+	buf->f_ffree = sbi->ffree;
+	buf->f_namelen = PITIX_NAME_LEN;
+
+	return 0;
 }
 
 struct super_operations pitix_sops = {
@@ -357,7 +441,7 @@ struct super_operations pitix_sops = {
 	// .evict_inode	= pitix_evict_inode,
 	// .write_inode	= pitix_write_inode,
 	.put_super	= pitix_put_super,
-	.statfs		= simple_statfs,
+	.statfs		= pitix_statfs,
 };
 
 /* Valid block sizes are: 512, 1024, 2048 or 4096 */
@@ -371,7 +455,7 @@ static inline int pitix_validate_block_size(u8 block_size_bits)
 int pitix_fill_super(struct super_block *s, void *data, int silent)
 {
 	struct pitix_super_block *ps, *psi;
-	struct buffer_head *bh;
+	struct buffer_head *bh, *dmap_bh, *imap_bh;
 	struct inode *root_inode;
 	struct dentry *root_dentry;
 	int ret = -EINVAL;
@@ -408,7 +492,16 @@ int pitix_fill_super(struct super_block *s, void *data, int silent)
 	    !sb_set_blocksize(s, 1 << ps->block_size_bits))
 		goto out_bad_blocksize;
 
-	/* TODO: Read imap & dmap */
+	/* Read imap & dmap */
+	imap_bh = sb_bread(s, psi->imap_block);
+	if (imap_bh == NULL)
+		goto out_bad_imap;
+	psi->imap = imap_bh->b_data;
+
+	dmap_bh = sb_bread(s, psi->dmap_block);
+	if (dmap_bh == NULL)
+		goto out_bad_dmap;
+	psi->dmap = dmap_bh->b_data;
 
 	/* Allocate root inode and root dentry */
 	root_inode = pitix_iget(s, PITIX_ROOT_INODE);
@@ -422,6 +515,8 @@ int pitix_fill_super(struct super_block *s, void *data, int silent)
 	
 	/* Store buffer_heads for further use. */
 	psi->sb_bh = bh;
+	psi->dmap_bh = dmap_bh;
+	psi->imap_bh = imap_bh;
 
 	return 0;
 
@@ -429,13 +524,19 @@ out_iput:
 	iput(root_inode);
 out_bad_inode:
 	pr_err("PITIX: failed to get root inode\n");
+	brelse(dmap_bh);
+out_bad_dmap:
+	pr_err("PITIX: error reading DMAP\n");
+	brelse(imap_bh);
+out_bad_imap:
+	pr_err("PITIX: error reading IMAP\n");
 out_bad_blocksize:
 	pr_err("PITIX: bad block size\n");
 out_bad_magic_version:
 	pr_err("PITIX: bad magic/version number\n");
 	brelse(bh);
 out_bad_sb:
-	pr_err("PITIX: error reading buffer_head\n");
+	pr_err("PITIX: error reading super-block\n");
 	s->s_fs_info = NULL;
 	kfree(psi);
 	return ret;

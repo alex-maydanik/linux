@@ -287,6 +287,8 @@ test_rw()
     check_true "check total blocks" test "$cblocks" = "$blocks" || echo "$cblocks" = "$blocks"
     check_true "check total inodes" test "$cinodes" = "$inodes" || echo "$cinodes" = "$inodes"
 
+    exit 0 # TODO: Move this :)
+
     do_mkdir lots_of_files 0777 0 0
     for i in $(seq 0 $(($de_per_dir-1))); do
         do_create lots_of_files/file$i $(($i*1024)) 0$(($i%8))$((($i/2)%8))$((($i/4)%8)) $(($i%100)) $(($i*32%100))
@@ -370,8 +372,6 @@ check_true  "module loading" insmod pitix.ko
 check_true  "test /proc/filesystems" grep pitix /proc/filesystems
 test_ro
 check_true "module unloading" rmmod pitix
-
-exit 0 # TODO: Move this :)
 
 check_true  "module loading" insmod pitix.ko
 check_true  "test /proc/filesystems" grep pitix /proc/filesystems

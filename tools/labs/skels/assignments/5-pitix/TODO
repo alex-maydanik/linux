@@ -7,9 +7,18 @@
 ✔ Complete read() file operations & enable `stat` and `cat` for files @done(22-01-01 20:01)
     ✔ Add handling for indirect blocks @done(22-01-07 17:57)
 
-☐ Write stuff - Define TODOs
+✔ Support inode allocation, freeing, statfs @done(22-01-14 16:03)
+☐ Refactor into multiple files (like minix)
+☐ Support inode write
+    ☐ Support new folder inode creation
+    ☐ Support new file inode creation
+☐ Support block allocation & freeing
+    ☐ Support file write operations
+    ☐ Add handling for indirect blocks
+☐ Handle file truncate
+☐ Support file removal
+☐ Support folder removal
 
 ☐ Locking - add where required
-
 ☐ Pass all tests
 ☐ Checkpatch and other static analyzers
