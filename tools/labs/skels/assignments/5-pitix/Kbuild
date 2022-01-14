@@ -1,2 +1,4 @@
 EXTRA_CFLAGS = -Wall -Wno-unused-function -g
-obj-m = pitix.o
+obj-m   = pitix.o
+pitix-y = pitix_super.o pitix_bitmap.o pitix_inode.o pitix_dir.o
+

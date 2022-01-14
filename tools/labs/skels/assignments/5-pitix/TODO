@@ -8,7 +8,7 @@
     ✔ Add handling for indirect blocks @done(22-01-07 17:57)
 
 ✔ Support inode allocation, freeing, statfs @done(22-01-14 16:03)
-☐ Refactor into multiple files (like minix)
+✔ Refactor into multiple files (like minix) @done(22-01-14 18:56)
 ☐ Support inode write
     ☐ Support new folder inode creation
     ☐ Support new file inode creation

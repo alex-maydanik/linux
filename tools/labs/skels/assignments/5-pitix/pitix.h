@@ -5,6 +5,9 @@
 #define IZONE_BLOCKS		32
 #define INODE_DIRECT_DATA_BLOCKS 5
 #define PITIX_NAME_LEN			16
+#define PITIX_SUPER_BLOCK	0
+#define PITIX_VERSION		2
+#define PITIX_ROOT_INODE	0
 
 /*
  *	filesystem layout:
@@ -77,27 +80,40 @@ static inline long pitix_inodes_per_block(struct super_block *sb)
 	return sb->s_blocksize / inode_size();
 }
 
+struct pitix_inode_info {
+	struct pitix_inode p_inode;
+	struct inode vfs_inode;
+};
+
 /* Bitmap operations */
 extern int pitix_alloc_block(struct super_block *sb);
 extern void pitix_free_block(struct super_block *sb, int block);
 extern int pitix_alloc_inode(struct super_block *sb);
 extern void pitix_free_inode(struct super_block *sb, int ino);
+extern struct pitix_inode * pitix_raw_inode(struct super_block *sb, ino_t ino,
+		struct buffer_head **bh);
 extern int pitix_get_block(struct inode *inode, sector_t block,
 		struct buffer_head *bh_result, int create);
+extern sector_t pitix_bmap(struct address_space *mapping, sector_t block);
 extern struct address_space_operations pitix_aops;
 
 /* Dir operations */
 extern struct inode_operations pitix_dir_inode_operations;
 extern struct file_operations pitix_dir_operations;
 ino_t pitix_inode_by_name(struct dentry *dentry, int delete);
+extern struct dentry *pitix_lookup(struct inode *dir,
+		struct dentry *dentry, unsigned int flags);
+extern int pitix_readdir(struct file *filp, struct dir_context *ctx);
 
 /* File operations */
 extern struct file_operations pitix_file_operations;
 extern struct inode_operations pitix_file_inode_operations;
 void pitix_truncate(struct inode *inode);
+int pitix_readpage(struct file *file, struct page *page);
 
 /* Inode operations */
 extern struct inode *pitix_new_inode(struct super_block *sb);
+extern void pitix_destroy_inode(struct inode *inode);
 extern int pitix_write_inode(struct inode *inode, struct writeback_control *wbc);
 extern void pitix_evict_inode(struct inode *inode);
 
