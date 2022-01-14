@@ -57,7 +57,7 @@ struct super_operations pitix_sops = {
 	.alloc_inode	= pitix_new_inode,
 	.destroy_inode	= pitix_destroy_inode,
 	// .evict_inode	= pitix_evict_inode,
-	// .write_inode	= pitix_write_inode,
+	.write_inode	= pitix_write_inode,
 	.put_super	= pitix_put_super,
 	.statfs		= pitix_statfs,
 };

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * pitix_inode.c contains the code that handles the directory handling operations
+ * pitix_inode.c contains the code that handles dentry related operations
  *
  * Author: Alexander Maydanik <alexander.maydanik@gmail.com>
  */
@@ -142,4 +142,51 @@ done:
 	brelse(bh);
 out_bad_sb:
 	return err;
+}
+
+int pitix_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
+{
+	int err = pitix_create(dir, dentry, mode, 0);
+	if (err < 0) {
+		pr_err("PITIX: Failed on pitix_create()\n");
+		return err;
+	}
+
+	/* TODO: allocate data block for the directory dentries */
+
+	return err;
+}
+
+int pitix_create(struct inode *dir, struct dentry *dentry, umode_t mode,
+		bool excl)
+{
+	struct inode *inode;
+	int ino, err;
+
+	/* Allocate new inode on disk */
+	ino = pitix_alloc_inode(dir->i_sb);
+	if (ino < 0) {
+		pr_err("PITIX: Failed to allocate inode\n");
+		return ino;
+	}
+
+	/* Configure inode mode and set inode operations */
+	inode->i_mode = mode;
+	pitix_set_inode(inode);
+	mark_inode_dirty(inode);
+	
+	/* TODO: Add dentry -> inode link */
+	err = pitix_add_link(dentry, inode);
+	if (!err) {
+		d_instantiate(dentry, inode);
+		return 0;
+	}
+	inode_dec_link_count(inode);
+	iput(inode);
+	return err;
+}
+
+int pitix_add_link(struct dentry *dentry, struct inode *inode)
+{
+	return 0;
 }

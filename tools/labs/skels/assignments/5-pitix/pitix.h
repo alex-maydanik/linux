@@ -104,6 +104,10 @@ ino_t pitix_inode_by_name(struct dentry *dentry, int delete);
 extern struct dentry *pitix_lookup(struct inode *dir,
 		struct dentry *dentry, unsigned int flags);
 extern int pitix_readdir(struct file *filp, struct dir_context *ctx);
+int pitix_create(struct inode *dir, struct dentry *dentry, umode_t mode,
+		bool excl);
+int pitix_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode);
+int pitix_add_link(struct dentry *dentry, struct inode *inode);
 
 /* File operations */
 extern struct file_operations pitix_file_operations;
@@ -116,6 +120,7 @@ extern struct inode *pitix_new_inode(struct super_block *sb);
 extern void pitix_destroy_inode(struct inode *inode);
 extern int pitix_write_inode(struct inode *inode, struct writeback_control *wbc);
 extern void pitix_evict_inode(struct inode *inode);
+void pitix_set_inode(struct inode *inode);
 
 extern struct inode *pitix_iget(struct super_block *sb, unsigned long ino);
 

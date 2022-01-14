@@ -111,7 +111,6 @@ int pitix_alloc_inode(struct super_block *sb)
 	mark_buffer_dirty(sbi->imap_bh);
 
 	/* Initialize inode fields */
-	/* TODO: inode_init_owner(inode, dir, mode); */
 	inode->i_ino = free_ino;
 	inode->i_mtime = inode->i_atime = inode->i_ctime = current_time(inode);
 	inode->i_blocks = 0;
@@ -141,4 +140,6 @@ void pitix_free_inode(struct super_block *sb, int ino)
 	clear_bit(ino, (void*)sbi->imap);
 	spin_unlock(&bitmap_lock);
 	mark_buffer_dirty(sbi->imap_bh);
+
+	brelse(bh);
 }
