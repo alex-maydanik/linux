@@ -146,13 +146,33 @@ out_bad_sb:
 
 int pitix_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
-	int err = pitix_create(dir, dentry, mode, 0);
+	int block;
+	struct inode *inode;
+	struct pitix_inode *pi;
+
+	int err = pitix_create(dir, dentry, S_IFDIR | mode, 0);
 	if (err < 0) {
 		pr_err("PITIX: Failed on pitix_create()\n");
 		return err;
 	}
 
-	/* TODO: allocate data block for the directory dentries */
+	inode = pitix_iget(dir->i_sb, dentry->d_inode->i_ino);
+	if (!inode) {
+		pr_err("PITIX: Failed to get inode\n");
+		return -EIO;
+	}
+	pi = &(container_of(inode, struct pitix_inode_info, vfs_inode))->p_inode;
+
+	/* Allocate data block for the directory dentries */
+	err = block = pitix_alloc_block(dir->i_sb);
+	if (err < 0) {
+		pr_err("PITIX: Failed to allocate block\n");
+		iput(inode);
+		return err;
+	}
+	pi->direct_data_blocks[0] = block;
+	i_size_write(inode, inode->i_sb->s_blocksize);
+	mark_inode_dirty(inode);
 
 	return err;
 }
@@ -169,6 +189,11 @@ int pitix_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 		pr_err("PITIX: Failed to allocate inode\n");
 		return ino;
 	}
+	inode = pitix_iget(dir->i_sb, ino);
+	if (!inode) {
+		pr_err("PITIX: Failed to get inode\n");
+		return -EIO;
+	}
 
 	/* Configure inode mode and set inode operations */
 	inode->i_mode = mode;
@@ -181,13 +206,57 @@ int pitix_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 		d_instantiate(dentry, inode);
 		return 0;
 	}
-	inode_dec_link_count(inode);
 	iput(inode);
 	return err;
 }
 
 int pitix_add_link(struct dentry *dentry, struct inode *inode)
 {
-	/* TODO: Implement */
+	struct buffer_head *bh;
+	/* Get inode of directory and container inode. */
+	struct inode *dir = d_inode(dentry->d_parent);
+	struct pitix_inode *dir_pi = &(container_of(dir,
+			struct pitix_inode_info, vfs_inode))->p_inode;
+	struct super_block *sb = dir->i_sb;
+	struct pitix_super_block *psb = pitix_sb(sb);
+	struct pitix_dir_entry *de;
+	int i;
+	
+	/* Read parent folder data block (contains dentries) */
+	bh = sb_bread(sb, psb->dzone_block + dir_pi->direct_data_blocks[0]);
+	if (bh == NULL) {
+		pr_err("PITIX: could not read block\n");
+		return -EIO;
+	}
+
+	/* Check if link already exists */
+	for (i = 0; i < dir_entries_per_block(sb); i++) {
+		de = ((struct pitix_dir_entry *) bh->b_data) + i;
+		if (de->ino == inode->i_ino || !strncmp(de->name, dentry->d_name.name, PITIX_NAME_LEN)) {
+			brelse(bh);
+			return -EEXIST;
+		}
+	}
+
+	/* Find empty dentry and create link */
+	for (i = 0; i < dir_entries_per_block(sb); i++) {
+		de = ((struct pitix_dir_entry *) bh->b_data) + i;
+		if (de->ino == 0) {
+			de->ino = inode->i_ino;
+			strncpy(de->name, dentry->d_name.name, PITIX_NAME_LEN);
+			goto found_it;
+		}
+	}
+
+	brelse(bh);
+	return -ENOSPC;
+
+found_it:
+	/* Update directory inode fields */
+	dir->i_mtime = dir->i_ctime = current_time(dir);
+	mark_inode_dirty(dir);
+
+	mark_buffer_dirty(bh);
+	brelse(bh);
 	return 0;
 }

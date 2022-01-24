@@ -11,10 +11,10 @@
 ✔ Refactor into multiple files (like minix) @done(22-01-14 18:56)
 ✔ Support inode write @done(22-01-14 22:35)
 ✔ Support block allocation & freeing @done(22-01-24 21:24)
-☐ Support new folder inode creation
+✔ Support new folder inode creation @done(22-01-24 23:38)
 ☐ Support new file inode creation
 ☐ Support file write operations
-☐ Add handling for indirect blocks
+☐ Add handling for indirect blocks (get_block - create)
 ☐ Handle file truncate
 ☐ Support file removal
 ☐ Support folder removal
