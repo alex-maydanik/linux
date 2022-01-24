@@ -14,10 +14,44 @@
 
 static DEFINE_SPINLOCK(bitmap_lock);
 
+int pitix_alloc_block(struct super_block *sb)
+{
+	struct pitix_super_block *sbi = pitix_sb(sb);
+	u32 num_blocks = get_blocks(sb);
+	int free_block;
+
+	/* Lookup DMAP for free slot */
+	spin_lock(&bitmap_lock);
+	free_block = find_first_zero_bit((void*)sbi->dmap, num_blocks);
+	if (free_block >= num_blocks) {
+		spin_unlock(&bitmap_lock);
+		return -ENOSPC;
+	}
+	set_bit(free_block, (void*)sbi->dmap);
+	sbi->bfree--;
+	spin_unlock(&bitmap_lock);
+	mark_buffer_dirty(sbi->dmap_bh);
+	mark_buffer_dirty(sbi->sb_bh);
+
+	return free_block;
+}
+
+void pitix_free_block(struct super_block *sb, int block)
+{
+	struct pitix_super_block *sbi = pitix_sb(sb);
+
+	/* Mark block as unused in DMAP */
+	spin_lock(&bitmap_lock);
+	clear_bit(block, (void*)sbi->dmap);
+	sbi->bfree++;
+	spin_unlock(&bitmap_lock);
+	mark_buffer_dirty(sbi->dmap_bh);
+	mark_buffer_dirty(sbi->sb_bh);
+}
+
 int pitix_get_block(struct inode *inode, sector_t block,
 		struct buffer_head *bh_result, int create)
 {
-	/* TODO: Support create() */
 	struct pitix_super_block *psb = pitix_sb(inode->i_sb);
 	sector_t disk_block = 0;
 	struct buffer_head *bh;
@@ -107,8 +141,10 @@ int pitix_alloc_inode(struct super_block *sb)
 		return -ENOSPC;
 	}
 	set_bit(free_ino, (void*)sbi->imap);
+	sbi->ffree--;
 	spin_unlock(&bitmap_lock);
 	mark_buffer_dirty(sbi->imap_bh);
+	mark_buffer_dirty(sbi->sb_bh);
 
 	/* Initialize inode fields */
 	inode->i_ino = free_ino;
@@ -138,8 +174,10 @@ void pitix_free_inode(struct super_block *sb, int ino)
 	/* Mark inode as unused in IMAP */
 	spin_lock(&bitmap_lock);
 	clear_bit(ino, (void*)sbi->imap);
+	sbi->ffree++;
 	spin_unlock(&bitmap_lock);
 	mark_buffer_dirty(sbi->imap_bh);
+	mark_buffer_dirty(sbi->sb_bh);
 
 	brelse(bh);
 }

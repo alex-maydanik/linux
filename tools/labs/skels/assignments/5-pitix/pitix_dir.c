@@ -175,7 +175,7 @@ int pitix_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 	pitix_set_inode(inode);
 	mark_inode_dirty(inode);
 	
-	/* TODO: Add dentry -> inode link */
+	/* Add dentry -> inode link */
 	err = pitix_add_link(dentry, inode);
 	if (!err) {
 		d_instantiate(dentry, inode);
@@ -188,5 +188,6 @@ int pitix_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 
 int pitix_add_link(struct dentry *dentry, struct inode *inode)
 {
+	/* TODO: Implement */
 	return 0;
 }
