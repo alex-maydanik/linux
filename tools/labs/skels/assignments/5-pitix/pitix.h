@@ -115,6 +115,9 @@ extern struct inode_operations pitix_file_inode_operations;
 void pitix_truncate(struct inode *inode);
 int pitix_readpage(struct file *file, struct page *page);
 int pitix_writepage(struct page *page, struct writeback_control *wbc);
+int pitix_write_begin(struct file *file, struct address_space *mapping,
+			loff_t pos, unsigned len, unsigned flags,
+			struct page **pagep, void **fsdata);
 
 /* Inode operations */
 extern struct inode *pitix_new_inode(struct super_block *sb);

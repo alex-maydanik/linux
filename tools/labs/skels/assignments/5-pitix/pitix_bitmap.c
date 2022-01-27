@@ -52,7 +52,6 @@ void pitix_free_block(struct super_block *sb, int block)
 int pitix_get_block(struct inode *inode, sector_t block,
 		struct buffer_head *bh_result, int create)
 {
-	/* TODO: Support block allocation - indirect */
 	struct pitix_super_block *psb = pitix_sb(inode->i_sb);
 	sector_t disk_block = 0;
 	struct buffer_head *bh;
@@ -71,14 +70,23 @@ int pitix_get_block(struct inode *inode, sector_t block,
 			if (disk_block < 0)
 				return disk_block;
 			pi->direct_data_blocks[block] = disk_block;
+			mark_inode_dirty(inode);
 			goto success;
 		}
 
 		return -EIO;
 	} else {
-		/* Indirect data block */
-		if (pi->indirect_data_block == 0)
-			return -EIO;
+		/* Indirect data block - allocate if required */
+		if (pi->indirect_data_block == 0) {
+			if (!create)
+				return -EIO;
+
+			disk_block = pitix_alloc_block(inode->i_sb);
+			if (disk_block < 0)
+				return disk_block;
+			pi->indirect_data_block = disk_block;
+			mark_inode_dirty(inode);
+		}
 		
 		bh = sb_bread(inode->i_sb, psb->dzone_block + pi->indirect_data_block);
 		if (bh == NULL) {
@@ -89,11 +97,22 @@ int pitix_get_block(struct inode *inode, sector_t block,
 		disk_block = indirect_blocks[block - INODE_DIRECT_DATA_BLOCKS];
 
 		if (disk_block == 0) {
+			if (!create) {
+				brelse(bh);
+				return -EIO;
+			}
+
+			/* Allocate data block pointed by indirect block */
+			disk_block = pitix_alloc_block(inode->i_sb);
+			if (disk_block < 0) {
+				brelse(bh);
+				return disk_block;
+			}
+
+			indirect_blocks[block - INODE_DIRECT_DATA_BLOCKS] = disk_block;
+			mark_buffer_dirty(bh);
 			brelse(bh);
-			return -EIO;
 		}
-
-
 	}
 
 success:
@@ -109,6 +128,31 @@ int pitix_writepage(struct page *page, struct writeback_control *wbc)
 int pitix_readpage(struct file *file, struct page *page)
 {
 	return block_read_full_page(page, pitix_get_block);
+}
+
+static void pitix_write_failed(struct address_space *mapping, loff_t to)
+{
+	struct inode *inode = mapping->host;
+
+	if (to > inode->i_size) {
+		truncate_pagecache(inode, inode->i_size);
+		/* TODO: Implement truncate */
+		// pitix_truncate(inode);
+	}
+}
+
+int pitix_write_begin(struct file *file, struct address_space *mapping,
+			loff_t pos, unsigned len, unsigned flags,
+			struct page **pagep, void **fsdata)
+{
+	int ret;
+
+	ret = block_write_begin(mapping, pos, len, flags, pagep,
+				pitix_get_block);
+	if (unlikely(ret))
+		pitix_write_failed(mapping, pos + len);
+
+	return ret;
 }
 
 sector_t pitix_bmap(struct address_space *mapping, sector_t block)
