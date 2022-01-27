@@ -52,6 +52,7 @@ void pitix_free_block(struct super_block *sb, int block)
 int pitix_get_block(struct inode *inode, sector_t block,
 		struct buffer_head *bh_result, int create)
 {
+	/* TODO: Support block allocation - indirect */
 	struct pitix_super_block *psb = pitix_sb(inode->i_sb);
 	sector_t disk_block = 0;
 	struct buffer_head *bh;
@@ -61,8 +62,19 @@ int pitix_get_block(struct inode *inode, sector_t block,
 	
 	if (block < INODE_DIRECT_DATA_BLOCKS) {
 		disk_block = pi->direct_data_blocks[block];
-		if (disk_block == 0)
-			return -EIO;
+		if (disk_block)
+			goto success;
+
+		/* Allocate direct data block */
+		if (create) {
+			disk_block = pitix_alloc_block(inode->i_sb);
+			if (disk_block < 0)
+				return disk_block;
+			pi->direct_data_blocks[block] = disk_block;
+			goto success;
+		}
+
+		return -EIO;
 	} else {
 		/* Indirect data block */
 		if (pi->indirect_data_block == 0)
@@ -84,8 +96,14 @@ int pitix_get_block(struct inode *inode, sector_t block,
 
 	}
 
+success:
 	map_bh(bh_result, inode->i_sb, psb->dzone_block + disk_block);
 	return 0;
+}
+
+int pitix_writepage(struct page *page, struct writeback_control *wbc)
+{
+	return block_write_full_page(page, pitix_get_block, wbc);
 }
 
 int pitix_readpage(struct file *file, struct page *page)

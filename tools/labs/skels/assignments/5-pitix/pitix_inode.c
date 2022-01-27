@@ -39,9 +39,9 @@ struct inode_operations pitix_dir_inode_operations = {
 
 struct address_space_operations pitix_aops = {
 	.readpage = pitix_readpage,
-	//.writepage = minix_writepage,
-	//.write_begin = minix_write_begin,
-	//.write_end = generic_write_end,
+	.writepage = pitix_writepage,
+	// .write_begin = pitix_write_begin,
+	.write_end = generic_write_end,
 	.bmap = pitix_bmap
 };
 

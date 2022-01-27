@@ -12,9 +12,9 @@
 ✔ Support inode write @done(22-01-14 22:35)
 ✔ Support block allocation & freeing @done(22-01-24 21:24)
 ✔ Support new folder inode creation @done(22-01-24 23:38)
-☐ Support new file inode creation
-☐ Support file write operations
-☐ Add handling for indirect blocks (get_block - create)
+✔ Support new file inode creation @done(22-01-24 23:41)
+✔ Support file write operations @done(22-01-27 12:13)
+    ☐ Add handling for indirect blocks (get_block - create)
 ☐ Handle file truncate
 ☐ Support file removal
 ☐ Support folder removal
