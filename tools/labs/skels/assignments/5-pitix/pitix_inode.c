@@ -54,11 +54,25 @@ void pitix_set_inode(struct inode *inode)
 	if (S_ISDIR(inode->i_mode)) {
 		inode->i_op = &pitix_dir_inode_operations;
 		inode->i_fop = &pitix_dir_operations;
-		inc_nlink(inode);
 	} else if (S_ISREG(inode->i_mode)) {
 		inode->i_op = &pitix_file_inode_operations;
 		inode->i_fop = &pitix_file_operations;
 	}
+}
+
+void pitix_evict_inode(struct inode *inode)
+{
+	truncate_inode_pages_final(&inode->i_data);
+
+	if (!inode->i_nlink) {
+		inode->i_size = 0;
+		// TODO: Implement
+		// pitix_truncate(inode);
+	}
+	invalidate_inode_buffers(inode);
+	clear_inode(inode);
+	if (!inode->i_nlink)
+		pitix_free_inode(inode->i_sb, inode->i_ino);
 }
 
 struct inode *pitix_iget(struct super_block *sb, unsigned long ino)
@@ -90,15 +104,13 @@ struct inode *pitix_iget(struct super_block *sb, unsigned long ino)
 	inode->i_mode = raw_inode->mode;
 	i_uid_write(inode, raw_inode->uid);
 	i_gid_write(inode, raw_inode->gid);
+	set_nlink(inode, 1);
 	inode->i_size = raw_inode->size;
 	inode->i_blocks = 0;
 	inode->i_mtime.tv_sec = inode->i_atime.tv_sec = inode->i_ctime.tv_sec = raw_inode->time;
 
 	/* Fill inode operations */
 	pitix_set_inode(inode);
-
-	if (S_ISDIR(inode->i_mode))
-		inc_nlink(inode);
 
 	/* Fill data for pitix_inode_info */
 	pii = container_of(inode, struct pitix_inode_info, vfs_inode);

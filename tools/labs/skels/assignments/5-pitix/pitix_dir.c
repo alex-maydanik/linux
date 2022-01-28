@@ -76,8 +76,11 @@ struct dentry *pitix_lookup(struct inode *dir,
 		pr_debug("PITIX: getting entry: name: %s, ino: %d\n",
 			de->name, de->ino);
 		inode = pitix_iget(sb, de->ino);
-		if (IS_ERR(inode))
+		if (IS_ERR(inode)) {
+			brelse(bh);
 			return ERR_CAST(inode);
+		}
+			
 	}
 
 	d_add(dentry, inode);
@@ -167,12 +170,14 @@ int pitix_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	err = block = pitix_alloc_block(dir->i_sb);
 	if (err < 0) {
 		pr_err("PITIX: Failed to allocate block\n");
+		inode_dec_link_count(inode);
 		iput(inode);
 		return err;
 	}
 	pi->direct_data_blocks[0] = block;
 	i_size_write(inode, inode->i_sb->s_blocksize);
 	mark_inode_dirty(inode);
+	iput(inode);
 
 	return err;
 }
@@ -206,6 +211,7 @@ int pitix_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 		d_instantiate(dentry, inode);
 		return 0;
 	}
+	inode_dec_link_count(inode);
 	iput(inode);
 	return err;
 }

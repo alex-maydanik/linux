@@ -31,7 +31,6 @@ int pitix_alloc_block(struct super_block *sb)
 	sbi->bfree--;
 	spin_unlock(&bitmap_lock);
 	mark_buffer_dirty(sbi->dmap_bh);
-	mark_buffer_dirty(sbi->sb_bh);
 
 	return free_block;
 }
@@ -46,7 +45,6 @@ void pitix_free_block(struct super_block *sb, int block)
 	sbi->bfree++;
 	spin_unlock(&bitmap_lock);
 	mark_buffer_dirty(sbi->dmap_bh);
-	mark_buffer_dirty(sbi->sb_bh);
 }
 
 int pitix_get_block(struct inode *inode, sector_t block,
@@ -111,8 +109,9 @@ int pitix_get_block(struct inode *inode, sector_t block,
 
 			indirect_blocks[block - INODE_DIRECT_DATA_BLOCKS] = disk_block;
 			mark_buffer_dirty(bh);
-			brelse(bh);
 		}
+
+		brelse(bh);
 	}
 
 success:
@@ -206,7 +205,6 @@ int pitix_alloc_inode(struct super_block *sb)
 	sbi->ffree--;
 	spin_unlock(&bitmap_lock);
 	mark_buffer_dirty(sbi->imap_bh);
-	mark_buffer_dirty(sbi->sb_bh);
 
 	/* Initialize inode fields */
 	inode->i_ino = free_ino;
@@ -214,6 +212,7 @@ int pitix_alloc_inode(struct super_block *sb)
 	inode->i_blocks = 0;
 	insert_inode_hash(inode);
 	mark_inode_dirty(inode);
+	iput(inode);
 
 	return free_ino;
 }
@@ -239,7 +238,6 @@ void pitix_free_inode(struct super_block *sb, int ino)
 	sbi->ffree++;
 	spin_unlock(&bitmap_lock);
 	mark_buffer_dirty(sbi->imap_bh);
-	mark_buffer_dirty(sbi->sb_bh);
 
 	brelse(bh);
 }

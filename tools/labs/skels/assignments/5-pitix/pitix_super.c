@@ -21,19 +21,25 @@ MODULE_LICENSE("GPL v2");
 
 static void pitix_put_super(struct super_block *sb)
 {
-	struct pitix_super_block *ps = sb->s_fs_info;
-
-	/* Free superblock buffer head. */
-	mark_buffer_dirty(ps->sb_bh);
-	brelse(ps->sb_bh);
+	struct pitix_super_block *psi = pitix_sb(sb);
+	struct pitix_super_block *ps = (struct pitix_super_block *)psi->sb_bh->b_data;
 
 	/* Free IMAP & DMAP & Write-Back */
-	mark_buffer_dirty(ps->dmap_bh);
-	brelse(ps->dmap_bh);
-	mark_buffer_dirty(ps->imap_bh);
-	brelse(ps->imap_bh);
+	mark_buffer_dirty(psi->dmap_bh);
+	brelse(psi->dmap_bh);
+	mark_buffer_dirty(psi->imap_bh);
+	brelse(psi->imap_bh);
+
+	/* Update free blocks and inode count */
+	ps->ffree = psi->ffree;
+	ps->bfree = psi->bfree;
+	
+	/* Free superblock buffer head. */
+	mark_buffer_dirty(psi->sb_bh);
+	brelse(psi->sb_bh);
 
 	sb->s_fs_info = NULL;
+	kfree(psi);
 }
 
 static int pitix_statfs(struct dentry *dentry, struct kstatfs *buf)
@@ -56,7 +62,7 @@ static int pitix_statfs(struct dentry *dentry, struct kstatfs *buf)
 struct super_operations pitix_sops = {
 	.alloc_inode	= pitix_new_inode,
 	.destroy_inode	= pitix_destroy_inode,
-	// .evict_inode	= pitix_evict_inode,
+	.evict_inode	= pitix_evict_inode,
 	.write_inode	= pitix_write_inode,
 	.put_super	= pitix_put_super,
 	.statfs		= pitix_statfs,
@@ -84,6 +90,9 @@ int pitix_fill_super(struct super_block *s, void *data, int silent)
 	s->s_fs_info = psi;
 
 	/* Read PITIX super block from disk */
+	if (!sb_set_blocksize(s, BLOCK_SIZE))
+		goto out_bad_sb;
+
 	bh = sb_bread(s, PITIX_SUPER_BLOCK);
 	if (bh == NULL)
 		goto out_bad_sb;
@@ -166,18 +175,11 @@ static struct dentry *pitix_mount(struct file_system_type *fs_type,
 	return mount_bdev(fs_type, flags, dev_name, data, pitix_fill_super);
 }
 
-static void pitix_kill_block_super(struct super_block *sb)
-{
-	struct pitix_super_block *psi = pitix_sb(sb);
-	kill_block_super(sb);
-	kfree(psi);
-}
-
 static struct file_system_type pitix_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "pitix",
 	.mount		= pitix_mount,
-	.kill_sb	= pitix_kill_block_super,
+	.kill_sb	= kill_block_super,
 	.fs_flags	= FS_REQUIRES_DEV,
 };
 
