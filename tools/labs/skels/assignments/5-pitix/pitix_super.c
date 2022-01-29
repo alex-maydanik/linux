@@ -22,17 +22,12 @@ MODULE_LICENSE("GPL v2");
 static void pitix_put_super(struct super_block *sb)
 {
 	struct pitix_super_block *psi = pitix_sb(sb);
-	struct pitix_super_block *ps = (struct pitix_super_block *)psi->sb_bh->b_data;
 
 	/* Free IMAP & DMAP & Write-Back */
 	mark_buffer_dirty(psi->dmap_bh);
 	brelse(psi->dmap_bh);
 	mark_buffer_dirty(psi->imap_bh);
 	brelse(psi->imap_bh);
-
-	/* Update free blocks and inode count */
-	ps->ffree = psi->ffree;
-	ps->bfree = psi->bfree;
 	
 	/* Free superblock buffer head. */
 	mark_buffer_dirty(psi->sb_bh);
@@ -111,8 +106,6 @@ int pitix_fill_super(struct super_block *s, void *data, int silent)
 	psi->dmap_block = ps->dmap_block;
 	psi->izone_block = ps->izone_block;
 	psi->dzone_block = ps->dzone_block;
-	psi->bfree = ps->bfree;
-	psi->ffree = ps->ffree;
 
 	/* Set block size for superblock. */
 	if (!pitix_validate_block_size(ps->block_size_bits) || 
@@ -129,6 +122,10 @@ int pitix_fill_super(struct super_block *s, void *data, int silent)
 	if (dmap_bh == NULL)
 		goto out_bad_dmap;
 	psi->dmap = dmap_bh->b_data;
+
+	/* Update free blocks and inode count */
+	psi->bfree = pitix_count_free_blocks(s);
+	psi->ffree = pitix_count_free_inodes(s);
 
 	/* Allocate root inode and root dentry */
 	root_inode = pitix_iget(s, PITIX_ROOT_INODE);

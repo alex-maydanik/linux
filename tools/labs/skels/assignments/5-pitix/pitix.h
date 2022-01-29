@@ -90,6 +90,8 @@ extern int pitix_alloc_block(struct super_block *sb);
 extern void pitix_free_block(struct super_block *sb, int block);
 extern int pitix_alloc_inode(struct super_block *sb);
 extern void pitix_free_inode(struct super_block *sb, int ino);
+extern unsigned long pitix_count_free_blocks(struct super_block *sb);
+extern unsigned long pitix_count_free_inodes(struct super_block *sb);
 extern struct pitix_inode * pitix_raw_inode(struct super_block *sb, ino_t ino,
 		struct buffer_head **bh);
 extern int pitix_get_block(struct inode *inode, sector_t block,

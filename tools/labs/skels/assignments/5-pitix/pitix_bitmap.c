@@ -14,6 +14,17 @@
 
 static DEFINE_SPINLOCK(bitmap_lock);
 
+static __u32 count_used(__u8 *map, u32 block_size)
+{
+	__u32 used = 0;
+	int i;
+
+	for (i = 0; i < block_size; i++)
+		used += hweight8(*map++);
+
+	return used;
+}
+
 int pitix_alloc_block(struct super_block *sb)
 {
 	struct pitix_super_block *sbi = pitix_sb(sb);
@@ -45,6 +56,13 @@ void pitix_free_block(struct super_block *sb, int block)
 	sbi->bfree++;
 	spin_unlock(&bitmap_lock);
 	mark_buffer_dirty(sbi->dmap_bh);
+}
+
+unsigned long pitix_count_free_blocks(struct super_block *sb)
+{
+	struct pitix_super_block *sbi = pitix_sb(sb);
+
+	return get_blocks(sb) - count_used(sbi->dmap, sb->s_blocksize);
 }
 
 int pitix_get_block(struct inode *inode, sector_t block,
@@ -240,4 +258,11 @@ void pitix_free_inode(struct super_block *sb, int ino)
 	mark_buffer_dirty(sbi->imap_bh);
 
 	brelse(bh);
+}
+
+unsigned long pitix_count_free_inodes(struct super_block *sb)
+{
+	struct pitix_super_block *sbi = pitix_sb(sb);
+
+	return get_inodes(sb) - count_used(sbi->imap, sb->s_blocksize);
 }
