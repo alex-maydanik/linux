@@ -120,6 +120,7 @@ int pitix_writepage(struct page *page, struct writeback_control *wbc);
 int pitix_write_begin(struct file *file, struct address_space *mapping,
 			loff_t pos, unsigned len, unsigned flags,
 			struct page **pagep, void **fsdata);
+int pitix_setattr(struct dentry *dentry, struct iattr *attr);
 
 /* Inode operations */
 extern struct inode *pitix_new_inode(struct super_block *sb);

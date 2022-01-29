@@ -26,6 +26,7 @@ struct file_operations pitix_file_operations = {
 
 struct inode_operations pitix_file_inode_operations = {
 	.getattr	= simple_getattr,
+	.setattr	= pitix_setattr,
 };
 
 struct file_operations pitix_dir_operations = {
@@ -66,8 +67,7 @@ void pitix_evict_inode(struct inode *inode)
 
 	if (!inode->i_nlink) {
 		inode->i_size = 0;
-		// TODO: Implement
-		// pitix_truncate(inode);
+		pitix_truncate(inode);
 	}
 	invalidate_inode_buffers(inode);
 	clear_inode(inode);
@@ -175,4 +175,28 @@ struct inode *pitix_new_inode(struct super_block *sb)
 	inode_init_once(&pii->vfs_inode);
 
 	return &pii->vfs_inode;
+}
+
+int pitix_setattr(struct dentry *dentry, struct iattr *attr)
+{
+	struct inode *inode = d_inode(dentry);
+	int error;
+
+	error = setattr_prepare(dentry, attr);
+	if (error)
+		return error;
+
+	if ((attr->ia_valid & ATTR_SIZE) &&
+	    attr->ia_size != i_size_read(inode)) {
+		error = inode_newsize_ok(inode, attr->ia_size);
+		if (error)
+			return error;
+
+		truncate_setsize(inode, attr->ia_size);
+		pitix_truncate(inode);
+	}
+
+	setattr_copy(inode, attr);
+	mark_inode_dirty(inode);
+	return 0;
 }

@@ -306,12 +306,12 @@ test_rw()
 
     for i in $(seq 0 $(($de_per_dir-1))); do
         check_file lots_of_files/file$i $(($i*1024)) 0$(($i%8))$((($i/2)%8))$((($i/4)%8)) $(($i%100)) $(($i*32%100)) -f /tmp/pitix.rw/
-        # if let "$(($i%2)) == 0"; then
-        #     do_truncate lots_of_files/file$i
-        # else
-        #     do_unlink lots_of_files/file$i
-        #     do_false_unlink lots_of_files/file$i
-        # fi
+        if let "$(($i%2)) == 0"; then
+            do_truncate lots_of_files/file$i
+        else
+            do_unlink lots_of_files/file$i
+            do_false_unlink lots_of_files/file$i
+        fi
     done
 
     exit 0 # TODO: Move this :)

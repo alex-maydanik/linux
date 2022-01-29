@@ -72,8 +72,14 @@ int pitix_get_block(struct inode *inode, sector_t block,
 	sector_t disk_block = 0;
 	struct buffer_head *bh;
 	__u16 *indirect_blocks;
+	__u16 max_blocks = INODE_DIRECT_DATA_BLOCKS + inode->i_sb->s_blocksize / sizeof(__u16);
 	struct pitix_inode *pi = &(container_of(inode,
 			struct pitix_inode_info, vfs_inode))->p_inode;
+	
+	if (block >= max_blocks) {
+		pr_err("PITIX: reached maximum blocks per inode\n");
+		return -EIO;
+	}
 	
 	if (block < INODE_DIRECT_DATA_BLOCKS) {
 		disk_block = pi->direct_data_blocks[block];
@@ -265,4 +271,63 @@ unsigned long pitix_count_free_inodes(struct super_block *sb)
 	struct pitix_super_block *sbi = pitix_sb(sb);
 
 	return get_inodes(sb) - count_used(sbi->imap, sb->s_blocksize);
+}
+
+void pitix_truncate(struct inode *inode)
+{
+	struct super_block *sb = inode->i_sb;
+	struct pitix_inode *pi = &(container_of(inode,
+			struct pitix_inode_info, vfs_inode))->p_inode;
+	sector_t new_block_count = DIV_ROUND_UP((u32)inode->i_size, (u32)sb->s_blocksize);
+	sector_t iblock = new_block_count;
+	__u16 max_blocks = INODE_DIRECT_DATA_BLOCKS + sb->s_blocksize / sizeof(__u16);
+	int disk_block;
+	struct buffer_head *bh;
+	__u16 *indirect_blocks = NULL;
+
+	/* Fill with zeros the space that was left unused from the last block */
+	block_truncate_page(inode->i_mapping, inode->i_size, pitix_get_block);
+
+	/* Free unused blocks */
+	do {
+		if (iblock < INODE_DIRECT_DATA_BLOCKS) {
+			disk_block = pi->direct_data_blocks[iblock];	
+			pi->direct_data_blocks[iblock] = 0;
+		} else {
+			/* Indirect-Block */
+			if (pi->indirect_data_block == 0)
+				break;
+			
+			/* Read indirect block */
+			if (indirect_blocks == NULL) {
+				bh = sb_bread(inode->i_sb, pitix_sb(sb)->dzone_block + pi->indirect_data_block);
+				if (bh == NULL) {
+					pr_err("PITIX: could not read block\n");
+					return;
+				}
+				indirect_blocks = (__u16 *)bh->b_data;
+			}
+			
+			disk_block = indirect_blocks[iblock - INODE_DIRECT_DATA_BLOCKS];
+			indirect_blocks[iblock - INODE_DIRECT_DATA_BLOCKS] = 0;
+			mark_buffer_dirty(bh);
+		}
+
+		/* Check if done freeing */
+		if (!disk_block)
+			break;
+		
+		pitix_free_block(sb, disk_block);
+	} while (++iblock < max_blocks);
+
+	/* Free indirect data block if required */
+	if (indirect_blocks) {
+		pitix_free_block(sb, pi->indirect_data_block);
+		pi->indirect_data_block = 0;
+		brelse(bh);
+	}
+
+	/* Update inode */
+	inode->i_mtime = inode->i_ctime = current_time(inode);
+	mark_inode_dirty(inode);
 }

@@ -16,7 +16,7 @@
 ✔ Support file write operations @done(22-01-27 12:13)
     ✔ Add handling for indirect blocks (get_block - create) @done(22-01-27 12:46)
 ✔ Add inode eviction & removal @done(22-01-28 14:43)
-☐ Handle file truncate
+✔ Handle file truncate @done(22-01-29 15:43)
 ☐ Support file removal
 ☐ Support folder removal
 
