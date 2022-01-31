@@ -30,6 +30,7 @@ int pitix_alloc_block(struct super_block *sb)
 	struct pitix_super_block *sbi = pitix_sb(sb);
 	u32 num_blocks = get_blocks(sb);
 	int free_block;
+	struct buffer_head *bh;
 
 	/* Lookup DMAP for free slot */
 	spin_lock(&bitmap_lock);
@@ -42,6 +43,18 @@ int pitix_alloc_block(struct super_block *sb)
 	sbi->bfree--;
 	spin_unlock(&bitmap_lock);
 	mark_buffer_dirty(sbi->dmap_bh);
+
+	/* Zero the allocated block */
+	bh = sb_bread(sb, sbi->dzone_block + free_block);
+	if (bh == NULL) {
+		pr_err("PITIX: could not read block\n");
+		pitix_free_block(sb, free_block);
+		return -EIO;
+	}
+	memset(bh->b_data, 0x0, sb->s_blocksize);
+	mark_buffer_dirty(bh);
+	sync_dirty_buffer(bh);
+	brelse(bh);
 
 	return free_block;
 }

@@ -152,6 +152,7 @@ int pitix_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	int block;
 	struct inode *inode;
 	struct pitix_inode *pi;
+	struct super_block *sb = dir->i_sb;
 
 	int err = pitix_create(dir, dentry, S_IFDIR | mode, 0);
 	if (err < 0) {
@@ -174,8 +175,9 @@ int pitix_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 		iput(inode);
 		return err;
 	}
+
 	pi->direct_data_blocks[0] = block;
-	i_size_write(inode, inode->i_sb->s_blocksize);
+	i_size_write(inode, sb->s_blocksize);
 	mark_inode_dirty(inode);
 	iput(inode);
 
@@ -265,4 +267,32 @@ found_it:
 	mark_buffer_dirty(bh);
 	brelse(bh);
 	return 0;
+}
+
+int pitix_unlink(struct inode * dir, struct dentry *dentry)
+{
+	int err = 0;
+	struct inode *inode = d_inode(dentry);
+	struct buffer_head *bh = NULL;
+	struct pitix_dir_entry *de;
+
+	de = pitix_find_entry(dentry, &bh);
+	if (!de) {
+		pr_err("PITIX: Couldn't find the entry\n");
+		err = -ENOENT;
+		goto end_unlink;
+	}
+
+	/* Remove dentry from parent */
+	memset(de, 0x0, sizeof(*de));
+	mark_buffer_dirty(bh);
+	dir->i_ctime = dir->i_mtime = current_time(dir);
+	mark_inode_dirty(dir);
+
+	inode_dec_link_count(inode);
+	mark_inode_dirty(inode);
+end_unlink:
+	if (bh)
+		brelse(bh);
+	return err;
 }

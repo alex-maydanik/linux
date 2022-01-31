@@ -17,9 +17,6 @@
     ✔ Add handling for indirect blocks (get_block - create) @done(22-01-27 12:46)
 ✔ Add inode eviction & removal @done(22-01-28 14:43)
 ✔ Handle file truncate @done(22-01-29 15:43)
-☐ Support file removal
+✔ Support file removal @done(22-01-31 22:32)
 ☐ Support folder removal
-
-☐ Locking - add where required
 ☐ Pass all tests
-☐ Checkpatch and other static analyzers

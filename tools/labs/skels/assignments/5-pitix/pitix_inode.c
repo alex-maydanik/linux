@@ -38,6 +38,7 @@ struct inode_operations pitix_dir_inode_operations = {
 	.lookup		= pitix_lookup,
 	.mkdir		= pitix_mkdir,
 	.create 	= pitix_create,
+	.unlink		= pitix_unlink,
 };
 
 struct address_space_operations pitix_aops = {

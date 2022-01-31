@@ -314,12 +314,12 @@ test_rw()
         fi
     done
 
-    exit 0 # TODO: Move this :)
-
     for i in $(seq 1 $(($de_per_dir-1))); do
         do_mkdir dir$i 0666 0 0
         do_create dir$i/dummy 4096 0666 0 0
     done
+
+    exit 0 # TODO: Move this :)
 
     for i in $(seq 1 $(($de_per_dir-1))); do
         do_false_rmdir dir$i
