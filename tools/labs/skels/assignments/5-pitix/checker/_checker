@@ -319,14 +319,11 @@ test_rw()
         do_create dir$i/dummy 4096 0666 0 0
     done
 
-    exit 0 # TODO: Move this :)
-
     for i in $(seq 1 $(($de_per_dir-1))); do
         do_false_rmdir dir$i
         do_unlink dir$i/dummy
         do_rmdir dir$i
     done
-
 
     check_false "module unloading" rmmod pitix
     check_true "umounting fs" umount /tmp/pitix.mnt/
@@ -368,11 +365,10 @@ cleanup_world
 
 mkdir -p /tmp
 
-# TODO: Uncomment
-# check_true  "module loading" insmod pitix.ko
-# check_true  "test /proc/filesystems" grep pitix /proc/filesystems
-# test_ro
-# check_true "module unloading" rmmod pitix
+check_true  "module loading" insmod pitix.ko
+check_true  "test /proc/filesystems" grep pitix /proc/filesystems
+test_ro
+check_true "module unloading" rmmod pitix
 
 check_true  "module loading" insmod pitix.ko
 check_true  "test /proc/filesystems" grep pitix /proc/filesystems

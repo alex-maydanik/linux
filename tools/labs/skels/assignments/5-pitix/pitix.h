@@ -111,6 +111,7 @@ int pitix_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 int pitix_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode);
 int pitix_add_link(struct dentry *dentry, struct inode *inode);
 int pitix_unlink(struct inode * dir, struct dentry *dentry);
+int pitix_rmdir(struct inode * dir, struct dentry *dentry);
 
 /* File operations */
 extern struct file_operations pitix_file_operations;

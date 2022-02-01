@@ -296,3 +296,33 @@ end_unlink:
 		brelse(bh);
 	return err;
 }
+
+int pitix_rmdir(struct inode * dir, struct dentry *dentry)
+{
+	struct inode *inode = d_inode(dentry);
+	struct pitix_inode *pi = &(container_of(inode,
+			struct pitix_inode_info, vfs_inode))->p_inode;
+	struct super_block *sb = dir->i_sb;
+	struct pitix_super_block *psb = pitix_sb(sb);
+	struct pitix_dir_entry *de;
+	struct buffer_head *bh;
+	int i;
+
+	/* Check whether the directory isn't empty */
+	bh = sb_bread(sb, psb->dzone_block + pi->direct_data_blocks[0]);
+	if (bh == NULL) {
+		pr_err("PITIX: could not read block\n");
+		return -EIO;
+	}
+
+	for (i = 0; i < dir_entries_per_block(sb); i++) {
+		de = ((struct pitix_dir_entry *) bh->b_data) + i;
+		if (de->ino != 0) {
+			brelse(bh);
+			return -ENOTEMPTY;
+		}
+	}
+
+	brelse(bh);
+	return pitix_unlink(dir, dentry);
+}
